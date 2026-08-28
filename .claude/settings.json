@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+
+  "sandbox": {
+    "enabled": false
+  },
+
+  "permissions": {
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable",
+
+    "deny": [
+      "Edit(~/.claude/**)",
+      "Read(~/.claude/.credentials.json)",
+      "Edit(//etc/claude-code/**)",
+      "Read(~/.ssh/**)",
+      "Edit(~/.ssh/**)",
+      "Read(~/.agent-env)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gh/**)",
+      "Read(.env)",
+      "Read(id_rsa)",
+      "Read(id_ed25519)",
+      "Edit(//etc/**)",
+      "Edit(~/.bashrc)",
+      "Edit(~/.profile)",
+      "Edit(~/.gitconfig)",
+      "Edit(~/.git/hooks/**)",
+      "Bash(sudo *)",
+      "Bash(su *)",
+      "Bash(chmod 777 *)"
+    ],
+
+    "allow": [
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(npm run test *)",
+      "Bash(npm run lint *)",
+      "Bash(npm run typecheck *)",
+      "Bash(pytest *)",
+      "Bash(rg *)",
+      "Bash(fd *)",
+      "Bash(tree *)"
+    ],
+
+    "ask": [
+      "Bash(git push *)",
+      "Bash(npm publish *)",
+      "Bash(docker *)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh release:*)",
+      "Bash(gh repo delete:*)",
+      "Bash(curl *)",
+      "Bash(wget *)"
+    ]
+  },
+
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/protect-files.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard-bash.sh"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/format.sh"
+          }
+        ]
+      }
+    ]
+  },
+
+  "enabledPlugins": {
+    "security-guidance@claude-plugins-official": true
+  }
+}
