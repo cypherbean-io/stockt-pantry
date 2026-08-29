@@ -63,4 +63,10 @@ grep -Eq '(^|[;&|[:space:]])(nc|ncat|netcat|socat)([[:space:]]|$)' <<<"$CMD" \
 grep -Eq 'chmod[[:space:]]+(-[a-zA-Z]+[[:space:]]+)?(777|a\+rwx|o\+w)' <<<"$CMD" \
   && block "world-writable chmod"
 
+grep -Eq 'git[[:space:]]+push[^;&|]*(https?://|git@|ssh://)' <<<"$CMD" \
+  && block "git push to an explicit URL rather than a named remote"
+
+grep -Eq 'git[[:space:]]+remote[[:space:]]+(add|set-url)' <<<"$CMD" \
+  && block "changing git remotes"
+
 exit 0
