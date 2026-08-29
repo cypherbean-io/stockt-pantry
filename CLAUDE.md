@@ -21,20 +21,29 @@ Next.js 16 (App Router) + React 19 + TypeScript, tests on Vitest. Node 26, npm.
 | Dev server | `npm run dev` (http://localhost:3000) |
 | Test (all) | `npm test` |
 | Test (single file) | `npm test -- src/lib/matching/match.test.ts` |
+| Test (pure logic only, no Docker) | `npm test -- --project=unit` |
+| Test (DB integration only) | `npm test -- --project=db` |
 | Test (watch) | `npm run test:watch` |
 | Lint | `npm run lint` (`eslint .`) |
 | Typecheck | `npm run typecheck` (`tsc --noEmit`) |
 | Build | `npm run build` |
 | Production server | `npm start` |
+| Dev database | `docker compose up -d db` (needs `POSTGRES_PASSWORD` in `.env`) |
+| DB migrations (Drizzle) | `npm run db:generate` then `npm run db:migrate` |
+| Stop the test database | `npm run db:test:down` |
 
 Not wired up yet — add these rows when the slice lands, don't invent them early:
 
 | Task | Command | Blocked on |
 | --- | --- | --- |
-| Local stack (app + Postgres) | `docker compose up` | no `docker-compose.yml` yet |
-| DB migrations (Drizzle) | `npm run db:migrate` / `db:generate` | Drizzle not installed yet |
+| Local stack (app + Postgres) | `docker compose up` | no `app` service — needs a Dockerfile and the auth slice; `docker-compose.yml` currently defines `db` only |
 
 Prefer running a single test file over the whole suite while iterating.
+
+The Vitest suite is split into two projects. `unit` is the pure logic and needs nothing
+installed; `db` starts a throwaway Postgres from `docker-compose.test.yml` and runs the
+migrations against it. A filtered run only starts Docker if it actually matches a `db`
+test, so single-file iteration on the matching engine stays fast.
 
 ## Architecture
 
@@ -54,7 +63,16 @@ Prefer running a single test file over the whole suite while iterating.
 - **Invariant — tenant isolation**: every query touching `pantry_item`, `recipe`,
   `ingredient`, or `recipe_ingredient` must be scoped by the session's `household_id` at
   the query layer, not filtered client-side or in the UI only. This is the one invariant
-  that must never be violated (SPEC.md §4).
+  that must never be violated (SPEC.md §4). Mechanically: tenant queries live in
+  `src/db/queries/`, take a branded `HouseholdScope` (`src/db/scope.ts`) as their first
+  argument, and build their `where` clause with `ownedBy(scope, table, ...)` — a bare
+  string cannot be passed where a scope is expected. `src/db/tenant-isolation.test.ts`
+  runs the whole surface against a real Postgres. Add a query, add it there.
+- Cross-tenant writes are additionally blocked at the schema level: `pantry_item` and
+  `recipe_ingredient` reference `ingredient`/`recipe` by a **composite** foreign key on
+  `(household_id, id)`, so Postgres refuses to store a row pointing at another
+  household's data even if the query layer is wrong. `recipe_ingredient` carries its own
+  `household_id` for the same reason — do not "normalise" it away.
 - **Invariant — SSRF mitigation on recipe import fetch**: the URL fetcher (SPEC.md §4)
   must resolve the host and reject private/loopback/link-local ranges before connecting,
   allow only http/https, revalidate every redirect hop against the same check (or
@@ -94,6 +112,25 @@ Prefer running a single test file over the whole suite while iterating.
 
 <!-- Append here whenever a correction has to be given twice. Over time this becomes
      the highest-signal part of the file. -->
+
+- `CHECK (x > 0)` on a `double precision` column does **not** reject `NaN` or `Infinity`.
+  Postgres sorts `NaN` above every other float, so `'NaN'::float8 > 0` is true, and
+  postgres.js passes JS `NaN`/`Infinity` straight through. Quantity and density checks
+  must be `x > 0 AND x < 'Infinity'::float8` (see `positiveFinite` in `src/db/schema.ts`),
+  and writes go through `src/db/validate.ts` first. A stored `Infinity` quantity makes a
+  recipe report *makeable* off an empty pantry; a stored `NaN` density slips past the
+  `<= 0` guard in `convert` and returns `NaN` instead of "can't verify".
+- Never log a Drizzle error's `.message`. `DrizzleQueryError` formats as
+  `Failed query: <sql>\nparams: <bound values>` — once auth lands that string contains
+  password hashes and invite tokens. Log `error.cause.code` and `.constraint_name`
+  instead; `tenant-isolation.db.test.ts` shows the unwrapping.
+- Tests that need Postgres are named `*.db.test.ts`. That suffix, not the directory, is
+  what routes a file to the Docker-backed Vitest project — `src/db/validate.test.ts` is
+  pure and must stay in the fast one.
+- `unsafeHouseholdScopeFromId()` validates the *shape* of a household id, not that the
+  caller is entitled to it. Passing a route parameter to it typechecks and quietly hands
+  over another household's data. The auth slice should add `scopeForSession(session)` and
+  leave this with two callers: that function, and tests.
 
 - No fallback HTML scraping for recipe import — if a page has no `schema.org/Recipe`
   JSON-LD block, the import fails explicitly. Don't add scraping heuristics; this was a

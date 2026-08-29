@@ -1,0 +1,47 @@
+# Throwaway Postgres for the integration test suite.
+#
+# `npm test` starts this itself (see src/db/testing/global-setup.ts); you should
+# not normally need to run it by hand.
+#
+# Two deliberate differences from docker-compose.yml:
+#
+#   - Trust authentication, so there is no password to invent, commit, or leak.
+#     That is only defensible because this container is bound to loopback and
+#     holds nothing but fixtures that the suite truncates between tests.
+#   - tmpfs storage, so the database starts empty on every `up` and leaves
+#     nothing on disk. It is also several times faster, which matters when the
+#     suite truncates between tests.
+#
+# The port is 55432 rather than 5432 so a running dev database is never the
+# thing the tests connect to and truncate.
+#
+# The explicit project name matters. Without it both compose files inherit the
+# directory name, and `docker compose -f docker-compose.test.yml down` would
+# tear down the dev `db` service too — `down` selects by project label, not by
+# the services named in `-f`. It also keeps the trust-auth container off the
+# dev stack's network.
+
+name: stockt-pantry-test
+
+services:
+  db-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: stockt_test
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    command:
+      - postgres
+      # Durability buys nothing for a database that is discarded on shutdown.
+      - -c
+      - fsync=off
+      - -c
+      - full_page_writes=off
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d stockt_test"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
