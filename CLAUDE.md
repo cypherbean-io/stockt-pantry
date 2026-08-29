@@ -13,20 +13,26 @@ shopping list of items needed.
 
 <!-- The highest-value lines in this file. Claude cannot guess these. -->
 
-Not yet scaffolded (see SPEC.md §3 Stack). Commands below are the planned ones once the
-Next.js app exists — update this table for real as soon as `package.json` lands.
+Next.js 16 (App Router) + React 19 + TypeScript, tests on Vitest. Node 26, npm.
 
 | Task | Command |
 | --- | --- |
 | Install | `npm install` |
-| Dev server | `npm run dev` |
+| Dev server | `npm run dev` (http://localhost:3000) |
 | Test (all) | `npm test` |
-| Test (single file) | `npm test -- <path/to/file>` |
-| Lint | `npm run lint` |
+| Test (single file) | `npm test -- src/lib/matching/match.test.ts` |
+| Test (watch) | `npm run test:watch` |
+| Lint | `npm run lint` (`eslint .`) |
 | Typecheck | `npm run typecheck` (`tsc --noEmit`) |
 | Build | `npm run build` |
-| Local stack (app + Postgres) | `docker compose up` |
-| DB migrations (Drizzle) | `npm run db:migrate` / `npm run db:generate` |
+| Production server | `npm start` |
+
+Not wired up yet — add these rows when the slice lands, don't invent them early:
+
+| Task | Command | Blocked on |
+| --- | --- | --- |
+| Local stack (app + Postgres) | `docker compose up` | no `docker-compose.yml` yet |
+| DB migrations (Drizzle) | `npm run db:migrate` / `db:generate` | Drizzle not installed yet |
 
 Prefer running a single test file over the whole suite while iterating.
 
@@ -99,3 +105,13 @@ Prefer running a single test file over the whole suite while iterating.
   `curl`/basic HTTP client from this sandbox (bot/WAF protection, not a network
   restriction) — don't rely on them for manual E2E import testing or as fixtures; use a
   local fixture page or a site confirmed to respond to a plain fetch.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

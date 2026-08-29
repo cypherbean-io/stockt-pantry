@@ -13,3 +13,10 @@ plans/
 *.pem
 *.key
 secrets/
+
+# --- Node / Next.js ---
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+coverage/
