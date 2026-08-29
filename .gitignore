@@ -3,6 +3,7 @@
 CLAUDE.local.md
 .claude/settings.local.json
 .claude/agent-memory-local/
+.claude/agent-memory/
 .claude/*.local.md
 plans/
 
