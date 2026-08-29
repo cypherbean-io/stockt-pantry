@@ -1,0 +1,39 @@
+{
+  "name": "stockt-pantry",
+  "version": "0.1.0",
+  "description": "Pantry inventory and recipes for a household, with 'what can I make right now' matching.",
+  "private": true,
+  "license": "ISC",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cypherbean-io/stockt-pantry.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cypherbean-io/stockt-pantry/issues"
+  },
+  "homepage": "https://github.com/cypherbean-io/stockt-pantry#readme",
+  "dependencies": {
+    "next": "^16.3.3",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.5",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.3.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11"
+  }
+}
