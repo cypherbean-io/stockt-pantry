@@ -1,16 +1,14 @@
+import type { FieldErrors, Parsed } from "@/lib/forms";
+
 /**
  * Input rules for the auth forms.
  *
- * These return field errors rather than throwing, unlike `src/db/validate.ts`.
- * A negative quantity is a bug somewhere; a mistyped password is the expected
- * case and has to render back into the form the user is looking at.
+ * The result shapes are shared with every other form parser and live in
+ * `@/lib/forms`; they are re-exported here because the auth modules have
+ * always imported them from this path.
  */
 
-export type FieldErrors = Readonly<Record<string, string>>;
-
-export type Parsed<T> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly errors: FieldErrors };
+export type { FieldErrors, Parsed };
 
 /** The longest address SMTP will carry (RFC 5321 §4.5.3.1.3). */
 export const MAX_EMAIL_LENGTH = 254;

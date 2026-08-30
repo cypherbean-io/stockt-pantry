@@ -28,7 +28,7 @@ export default async function HouseholdPage() {
     <main>
       <h1>{household?.name ?? "Household"}</h1>
       <p>
-        Signed in as {session.email}. <Link href="/">Pantry</Link>
+        Signed in as {session.email}. <Link href="/pantry">Pantry</Link>
       </p>
 
       <h2>Members</h2>

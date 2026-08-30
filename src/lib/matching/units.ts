@@ -31,6 +31,19 @@ export const UNITS = {
 export type UnitKey = keyof typeof UNITS;
 
 /**
+ * Whether a caller-supplied value names one of the units above.
+ *
+ * `value in UNITS` would also answer yes to `"constructor"` and `"toString"`
+ * and then index straight to a function, so this asks about own properties
+ * only. Everything a form submits is a string of the user's choosing, and
+ * `pantry_item.unit_id` is a foreign key — an unchecked value reaches Postgres
+ * as a constraint violation rather than as a field error.
+ */
+export function isUnitKey(value: unknown): value is UnitKey {
+  return typeof value === "string" && Object.hasOwn(UNITS, value);
+}
+
+/**
  * Convert `value` from one unit to another.
  *
  * Same-dimension conversions always resolve. Mass<->volume needs the

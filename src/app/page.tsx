@@ -36,11 +36,12 @@ export default function Home() {
     <main>
       <h1>Stockt Pantry</h1>
       {/*
-        Still the fixture-driven demo of the matching engine — wiring this page
-        to a real household's pantry is the pantry slice, not the auth one.
+        Still the fixture-driven demo of the matching engine. The pantry behind
+        `/pantry` is real now, but this view also needs a real recipe to match
+        against, so it stays on fixtures until the recipe slice lands.
       */}
       <p>
-        <Link href="/household">Your household</Link>
+        <Link href="/pantry">Your pantry</Link> · <Link href="/household">Your household</Link>
       </p>
 
       <h2>
