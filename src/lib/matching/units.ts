@@ -31,15 +31,17 @@ export const UNITS = {
 export type UnitKey = keyof typeof UNITS;
 
 /**
- * Narrow a string to a unit key.
+ * Whether a caller-supplied value names one of the units above.
  *
- * `unit_id` is a text column and a form field is a string, so everything
- * arrives here unnarrowed. The check is `Object.hasOwn` rather than
- * `UNITS[value] !== undefined`, which would answer true for `"constructor"`
- * and hand the caller a function where a unit was expected.
+ * `value in UNITS` would also answer yes to `"constructor"` and `"toString"`
+ * and then index straight to a function, so this asks about own properties
+ * only. Everything a form submits is a string of the user's choosing, and
+ * `pantry_item.unit_id` is a foreign key — an unchecked value reaches Postgres
+ * as a constraint violation rather than as a field error. `unknown` rather
+ * than `string` because a raw `FormData` value can also be a `File`.
  */
-export function isUnitKey(value: string): value is UnitKey {
-  return Object.hasOwn(UNITS, value);
+export function isUnitKey(value: unknown): value is UnitKey {
+  return typeof value === "string" && Object.hasOwn(UNITS, value);
 }
 
 /** The unit a stored `unit_id` names, or undefined if it names nothing. */

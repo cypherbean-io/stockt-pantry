@@ -135,33 +135,42 @@ describe("ingredient catalog", () => {
     expect(await findIngredientById(scopeB, created.id)).toBeUndefined();
   });
 
-  it("resolves a name only within the scoped household", async () => {
-    // Both households have an ingredient named "Flour".
-    const found = await findIngredientByName(scopeA, "Flour");
-
-    expect(found?.id).toBe(alpha.ingredientId);
+  it("does not return another household's ingredient by name", async () => {
+    // Both households named their entry "Flour", so an unscoped exact-name
+    // lookup would return whichever row Postgres reached first.
+    expect((await findIngredientByName(scopeA, "Flour"))?.id).toBe(alpha.ingredientId);
+    expect((await findIngredientByName(scopeB, "Flour"))?.id).toBe(beta.ingredientId);
   });
 
-  it("resolves a name regardless of how it was capitalised", async () => {
-    // Otherwise typing "flour" on the recipe form silently forks the catalog
-    // and the pantry stops matching the recipe.
-    expect((await findIngredientByName(scopeA, "  fLoUr "))?.id).toBe(alpha.ingredientId);
+  it("finds nothing by a name only another household uses", async () => {
+    await createIngredient(scopeB, { name: "Semolina" });
+
+    expect(await findIngredientByName(scopeA, "Semolina")).toBeUndefined();
   });
 
-  it("reuses the household's own entry rather than creating a second one", async () => {
-    const resolved = await findOrCreateIngredient(scopeA, { name: "flour" });
+  it("creates into the scope's household when the name is new to it", async () => {
+    const entry = await findOrCreateIngredient(scopeA, { name: "Semolina" });
 
-    expect(resolved.id).toBe(alpha.ingredientId);
-    expect(await listIngredients(scopeA)).toHaveLength(1);
+    expect(entry.householdId).toBe(alpha.householdId);
+    expect(await findIngredientById(scopeB, entry.id)).toBeUndefined();
   });
 
-  it("creates its own entry rather than adopting another household's", async () => {
-    // Beta also has "Flour". Reaching across would cross-link the catalogs;
-    // the composite foreign keys would then reject every write that used it.
-    const resolved = await findOrCreateIngredient(scopeB, { name: "Semolina" });
+  it("returns its own entry rather than the other household's identical one", async () => {
+    // The unique constraint is on (household_id, name), so "already taken" is
+    // a per-household question. Resolving it against the wrong household would
+    // hand a caller a catalog id it must never see.
+    const entry = await findOrCreateIngredient(scopeA, { name: "Flour" });
 
-    expect(resolved.householdId).toBe(beta.householdId);
-    expect(await findIngredientById(scopeA, resolved.id)).toBeUndefined();
+    expect(entry.id).toBe(alpha.ingredientId);
+  });
+
+  it("creates its own entry even though the other household has that name", async () => {
+    await createIngredient(scopeB, { name: "Semolina" });
+
+    const entry = await findOrCreateIngredient(scopeA, { name: "Semolina" });
+
+    expect(entry.householdId).toBe(alpha.householdId);
+    expect(await listIngredients(scopeB)).toHaveLength(2);
   });
 
   it("keeps the density of an entry that already exists", async () => {

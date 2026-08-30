@@ -1,4 +1,4 @@
-import { asc, eq, ilike, sql } from "drizzle-orm";
+import { asc, eq, ilike } from "drizzle-orm";
 
 import { getDb } from "../client";
 import { guarded } from "../redact";
@@ -13,7 +13,7 @@ import { assertOptionalDensity } from "../validate";
  *
  * The queries that bind a caller-supplied *name* are wrapped in `guarded`.
  * Drizzle's error message quotes the bound parameters, and an ingredient name
- * is recipe content — which SPEC.md §4 keeps out of the logs.
+ * is pantry/recipe content — which SPEC.md §4 keeps out of the logs.
  */
 
 const LABEL = "Ingredient query";
@@ -44,15 +44,11 @@ export async function findIngredientById(
 }
 
 /**
- * Resolve a typed-in name to a catalog entry, case-insensitively.
+ * Exact-name lookup, matching `ingredient_household_name_unique`.
  *
- * The lowering happens in SQL on purpose. JS `toLowerCase()` and Postgres
- * `lower()` disagree on a handful of codepoints, and the unique index this is
- * effectively probing is a Postgres one — normalising in JS instead would let
- * "the name is free" and "the insert succeeds" answer differently.
- *
- * The name is compared, never trusted: the household still comes from the
- * scope, so this cannot reach another tenant's identically-named entry.
+ * Distinct from `searchIngredients` below: this answers "does this household
+ * already have this entry", which is a question about the constraint, so it
+ * compares the way the constraint does — case-sensitively, no wildcards.
  */
 export async function findIngredientByName(
   scope: HouseholdScope,
@@ -62,14 +58,7 @@ export async function findIngredientByName(
     getDb()
       .select()
       .from(ingredient)
-      .where(
-        ownedBy(
-          scope,
-          ingredient,
-          sql`lower(${ingredient.name}) = lower(${name.trim()}::text)`,
-        ),
-      )
-      .orderBy(asc(ingredient.name))
+      .where(ownedBy(scope, ingredient, eq(ingredient.name, name)))
       .limit(1),
   );
   return rows[0];
@@ -123,45 +112,43 @@ export async function createIngredient(
 }
 
 /**
- * The catalog entry for a name, creating one if the household has none.
+ * The entry for this name, creating it if the household does not have one.
  *
- * This is what "create new ingredient: <name>" resolves to on the recipe form,
- * and what the import review screen will need for the same reason (SPEC.md §3
- * step 4). An existing entry is returned as it stands — `densityGPerMl` is only
- * consulted when a row is actually created, because editing the density of an
- * existing ingredient is out of scope for v1 (SPEC.md §2).
+ * Adding something to the pantry — or resolving a recipe line's ingredient —
+ * is one user action, so this is one operation rather than a check the caller
+ * does first: `insert ... on conflict do nothing` settles the race with a
+ * concurrent add of the same name inside Postgres, where the unique constraint
+ * already is. Without it the loser of that race gets SQLSTATE 23505, and a
+ * driver error out of here would carry the bound values into a log
+ * (CLAUDE.md) — `guarded` is what stops that.
+ *
+ * An existing entry is returned untouched, density included. v1 has no surface
+ * for editing an existing ingredient's density (SPEC.md §2, Out), and quietly
+ * overwriting it here would be one.
  */
 export async function findOrCreateIngredient(
   scope: HouseholdScope,
   values: NewIngredient,
 ): Promise<IngredientRow> {
-  const name = values.name.trim();
-
-  const existing = await findIngredientByName(scope, name);
-  if (existing !== undefined) {
-    return existing;
-  }
-
   const densityGPerMl = assertOptionalDensity(values.densityGPerMl);
 
-  const rows = await guarded(LABEL, () =>
+  const inserted = await guarded(LABEL, () =>
     getDb()
       .insert(ingredient)
-      .values({ householdId: scope.householdId, name, densityGPerMl })
-      // Two members adding the same ingredient at once: the loser takes the
-      // row the winner wrote rather than failing the whole save.
+      .values({ householdId: scope.householdId, name: values.name, densityGPerMl })
       .onConflictDoNothing({ target: [ingredient.householdId, ingredient.name] })
       .returning(),
   );
 
-  const created = rows[0];
-  if (created !== undefined) {
-    return created;
-  }
+  const created = inserted[0];
+  if (created !== undefined) return created;
 
-  const raced = await findIngredientByName(scope, name);
-  if (raced === undefined) {
-    throw new Error("Ingredient insert conflicted but no matching row was found");
+  // `do nothing` waits for the conflicting transaction to commit before
+  // returning empty, so by the time this runs the row it conflicted with is
+  // visible to a fresh statement.
+  const existing = await findIngredientByName(scope, values.name);
+  if (existing === undefined) {
+    throw new Error("Insert conflicted but no ingredient row was found");
   }
-  return raced;
+  return existing;
 }

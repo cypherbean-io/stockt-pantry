@@ -5,7 +5,8 @@ import { currentSession } from "@/lib/auth/session";
 /**
  * The front door. There is nothing to show an anonymous visitor — SPEC.md §2
  * rules out public signup, so a marketing page would only be a link to a form
- * that will refuse them.
+ * that will refuse them. Signed in, `/recipes` is real now (pantry and
+ * matching both read live rows), so this no longer needs a fixture demo.
  */
 export default async function Home() {
   redirect((await currentSession()) === undefined ? "/login" : "/recipes");

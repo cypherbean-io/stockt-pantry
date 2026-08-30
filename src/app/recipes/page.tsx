@@ -33,13 +33,14 @@ export default async function RecipesPage() {
     <main>
       <h1>What can I make?</h1>
       <p>
-        <Link href="/recipes/new">Add a recipe</Link> · <Link href="/household">Your household</Link>
+        <Link href="/recipes/new">Add a recipe</Link> · <Link href="/pantry">Your pantry</Link> ·{" "}
+        <Link href="/household">Your household</Link>
       </p>
 
       {pantryRows.length === 0 && (
         <p>
           <strong>The pantry is empty.</strong> Until it has something in it, every recipe here
-          will read as missing every ingredient.
+          will read as missing every ingredient. <Link href="/pantry">Add what you have</Link>.
         </p>
       )}
 
