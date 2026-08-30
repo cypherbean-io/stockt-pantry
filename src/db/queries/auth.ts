@@ -1,6 +1,7 @@
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
 
 import { getDb } from "../client";
+import { isUniqueViolation, redacted as redactedWith, guarded as guardedWith } from "../redact";
 import { household, invite, session, user } from "../schema";
 import type { VerifiedSession } from "../scope";
 
@@ -19,61 +20,20 @@ import type { VerifiedSession } from "../scope";
  * accepts a household id from the caller.
  */
 
-const UNIQUE_VIOLATION = "23505";
-
-/** The fields postgres.js copies off the wire's ErrorResponse. */
-type PostgresError = { readonly code?: string; readonly constraint_name?: string };
-
 /**
- * Drizzle wraps driver errors in a `DrizzleQueryError` whose message is
- * `Failed query: <sql>\nparams: <bound values>` — for these queries that string
- * contains password hashes and invite token hashes, so it must never be logged
- * or matched against. The SQLSTATE hangs off `cause` instead.
- */
-function driverError(error: unknown): PostgresError | null {
-  return ((error as { cause?: unknown } | null)?.cause ?? error) as PostgresError | null;
-}
-
-function isUniqueViolation(error: unknown, constraint: string): boolean {
-  const cause = driverError(error);
-  return cause?.code === UNIQUE_VIOLATION && cause?.constraint_name === constraint;
-}
-
-/**
- * Replace a driver error with one that is safe to let escape.
- *
- * Not matching on `DrizzleQueryError.message` is only half the rule — anything
- * that rethrows it hands the same string to whatever logs it upstream, and in
- * this module the bound parameters include password hashes and session token
- * hashes. So the original is dropped entirely, not attached as `cause`: Node
- * prints the whole cause chain when it reports an unhandled error.
- *
- * What survives is what CLAUDE.md says to log — the SQLSTATE and the
- * constraint. It is enough to tell a unique violation from an encoding error
- * from a dropped connection, which is all a caller can act on anyway.
- *
- * This is not hypothetical: `logIn` reaches `findUserCredentialsByEmail` with
- * whatever address an unauthenticated request posted, so any input Postgres
- * rejects outright (a NUL byte, SQLSTATE 22021) would otherwise print a real
- * user's stored hash into the log on the way out.
+ * Every driver error out of this module is redacted before it escapes (see
+ * `../redact`). That is not hypothetical here: `logIn` reaches
+ * `findUserCredentialsByEmail` with whatever address an unauthenticated request
+ * posted, so any input Postgres rejects outright (a NUL byte, SQLSTATE 22021)
+ * would otherwise print a real user's stored hash into the log on the way out.
  */
 function redacted(error: unknown): Error {
-  const cause = driverError(error);
-  const code = cause?.code ?? "unknown";
-  const constraint = cause?.constraint_name;
-  return new Error(
-    `Auth query rejected by the database (SQLSTATE ${code}` +
-      `${constraint === undefined ? "" : `, constraint ${constraint}`})`,
-  );
+  return redactedWith("Auth query", error);
 }
 
 /** Wraps a read: there is no expected failure, so everything is redacted. */
 async function guarded<T>(run: () => Promise<T>): Promise<T> {
-  try {
-    return await run();
-  } catch (error) {
-    throw redacted(error);
-  }
+  return guardedWith("Auth query", run);
 }
 
 /**

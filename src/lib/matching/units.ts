@@ -31,6 +31,23 @@ export const UNITS = {
 export type UnitKey = keyof typeof UNITS;
 
 /**
+ * Narrow a string to a unit key.
+ *
+ * `unit_id` is a text column and a form field is a string, so everything
+ * arrives here unnarrowed. The check is `Object.hasOwn` rather than
+ * `UNITS[value] !== undefined`, which would answer true for `"constructor"`
+ * and hand the caller a function where a unit was expected.
+ */
+export function isUnitKey(value: string): value is UnitKey {
+  return Object.hasOwn(UNITS, value);
+}
+
+/** The unit a stored `unit_id` names, or undefined if it names nothing. */
+export function unitById(id: string): Unit | undefined {
+  return isUnitKey(id) ? UNITS[id] : undefined;
+}
+
+/**
  * Convert `value` from one unit to another.
  *
  * Same-dimension conversions always resolve. Mass<->volume needs the
@@ -48,7 +65,7 @@ export function convert(
   const inBase = value * from.toBase;
 
   if (from.dimension === to.dimension) {
-    return inBase / to.toBase;
+    return finiteOrNull(inBase / to.toBase);
   }
 
   if (densityGPerMl === undefined || densityGPerMl <= 0) {
@@ -57,12 +74,27 @@ export function convert(
 
   // Cross-dimension: route through the density bridge (grams <-> millilitres).
   if (from.dimension === "mass" && to.dimension === "volume") {
-    return inBase / densityGPerMl / to.toBase;
+    return finiteOrNull(inBase / densityGPerMl / to.toBase);
   }
   if (from.dimension === "volume" && to.dimension === "mass") {
-    return (inBase * densityGPerMl) / to.toBase;
+    return finiteOrNull((inBase * densityGPerMl) / to.toBase);
   }
 
   // count <-> mass/volume is never resolvable, density or not.
   return null;
+}
+
+/**
+ * A conversion that overflowed answers "can't verify", not a number.
+ *
+ * The data-entry layer bounds density to a physical range, but the CHECK
+ * constraint behind it only says `> 0 AND < Infinity` — a density of `1e-300`
+ * stores cleanly and then divides a real pantry quantity into `Infinity` here.
+ * `Infinity >= required` is true for every recipe, so the result would be a
+ * confident "have enough" off almost nothing. This is CLAUDE.md's float gotcha
+ * reached through the divisor rather than through the quantity, and it is the
+ * one arithmetic outcome the engine cannot pass on to the caller.
+ */
+function finiteOrNull(result: number): number | null {
+  return Number.isFinite(result) ? result : null;
 }
