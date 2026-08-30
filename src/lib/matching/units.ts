@@ -49,6 +49,22 @@ export function unitById(id: string): Unit | undefined {
   return isUnitKey(id) ? UNITS[id] : undefined;
 }
 
+const KEY_BY_UNIT: ReadonlyMap<Unit, UnitKey> = new Map(
+  Object.entries(UNITS).map(([key, unit]) => [unit as Unit, key as UnitKey]),
+);
+
+/**
+ * The id a unit is stored under — `unitById` run backwards.
+ *
+ * The import line parser hands back the unit itself, and a `<select>` value and
+ * a `unit_id` column both want the key. `unit.name` is not it: the millilitre
+ * is named "mL" and keyed "ml". Identity lookup rather than a name search,
+ * because the table's values are the only `Unit` objects that exist.
+ */
+export function unitKeyOf(unit: Unit): UnitKey | undefined {
+  return KEY_BY_UNIT.get(unit);
+}
+
 /**
  * Convert `value` from one unit to another.
  *

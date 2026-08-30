@@ -167,6 +167,41 @@ export function describeFailure(failure: FetchFailure): string {
 }
 
 /**
+ * A user-supplied URL, in the form it is safe to write into a server log.
+ *
+ * SPEC.md §4 asks the fetcher to log its target and outcome, and in the same
+ * breath says never to log a password. A pasted URL can be both: `guardUrl`
+ * rejects `https://user:secret@host/` precisely *because* the userinfo is a
+ * credential, and the rejection is the thing that gets logged. A query string
+ * is the same problem one step along — plenty of recipe links are signed.
+ *
+ * So: userinfo and query dropped, fragment dropped, and a non-web scheme
+ * reduced to the scheme, which is the only part of it worth debugging. What
+ * comes back is free of control characters, because `new URL` strips tabs and
+ * newlines and percent-encodes the rest — a pasted URL cannot forge a log line.
+ */
+export function redactUrlForLog(rawUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return "<unparseable URL>";
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return `<${url.protocol} URL>`;
+  }
+
+  url.username = "";
+  url.password = "";
+  const hadQuery = url.search !== "";
+  url.search = "";
+  url.hash = "";
+
+  return `${url.href}${hadQuery ? "?…" : ""}`;
+}
+
+/**
  * Fetch a user-supplied page. Never throws: every outcome, including a rejected
  * URL, comes back as a discriminated result. Show it via `describeFailure` —
  * the raw failure carries internal detail meant only for the server log.

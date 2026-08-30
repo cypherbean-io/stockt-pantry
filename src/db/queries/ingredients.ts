@@ -23,12 +23,21 @@ export type NewIngredient = {
   readonly densityGPerMl?: number;
 };
 
+/**
+ * Guarded even though the only thing it binds is a household id, which SPEC.md
+ * §4 does allow in a log. Nothing on the import path catches this, so an
+ * unguarded driver error would escape the action into Next's default handler,
+ * which prints `Failed query: select ... params: ...` — and CLAUDE.md's rule
+ * against that is categorical rather than a judgement about blast radius.
+ */
 export async function listIngredients(scope: HouseholdScope): Promise<IngredientRow[]> {
-  return getDb()
-    .select()
-    .from(ingredient)
-    .where(ownedBy(scope, ingredient))
-    .orderBy(asc(ingredient.name));
+  return guarded(LABEL, () =>
+    getDb()
+      .select()
+      .from(ingredient)
+      .where(ownedBy(scope, ingredient))
+      .orderBy(asc(ingredient.name)),
+  );
 }
 
 export async function findIngredientById(

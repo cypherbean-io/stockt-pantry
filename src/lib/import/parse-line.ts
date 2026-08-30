@@ -141,7 +141,13 @@ export function parseIngredientLine(raw: string): ParsedIngredientLine {
 
   const unitMatch = UNIT_WORD_RE.exec(rest);
   const unitWord = unitMatch?.[1]?.replace(/\.$/, "").toLowerCase() ?? "";
-  const unit = UNIT_WORDS[unitWord];
+  // Own properties only, for the reason `isUnitKey` gives: `UNIT_WORDS[word]`
+  // answers "constructor" off `Object.prototype` and hands back a function
+  // where a `Unit` was promised. The word survives lowercasing, the line comes
+  // off a page anyone can point this at, and the result would be a line marked
+  // high-confidence with no unit — a silent default on the one screen SPEC.md
+  // §5 requires an explicit confirmation from.
+  const unit = Object.hasOwn(UNIT_WORDS, unitWord) ? UNIT_WORDS[unitWord] : undefined;
 
   if (unit !== undefined) {
     rest = rest.slice(unitMatch?.[0].length ?? 0).trimStart();

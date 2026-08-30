@@ -26,6 +26,32 @@ export type ExtractResult =
   | { readonly ok: true; readonly recipe: ParsedRecipe }
   | { readonly ok: false; readonly failure: JsonLdFailure };
 
+/**
+ * Turn a failure into something to show the person who pasted the URL.
+ *
+ * The counterpart to `describeFailure` in `fetch-page.ts`, and for the same
+ * reason: the caller should never have to write these messages itself, and
+ * "no-jsonld" is not an explanation. Nothing here is sensitive — the page was
+ * public — but a reason code still is not English.
+ */
+export function describeExtractFailure(failure: JsonLdFailure): string {
+  switch (failure.reason) {
+    case "no-jsonld":
+    case "no-recipe":
+      // One message for both: to the user they are the same outcome, and the
+      // distinction (a page with no structured data at all versus one whose
+      // structured data is about something else) is only useful in a log.
+      return (
+        "No recipe could be read from that page. This app imports recipes from the " +
+        "schema.org markup most recipe sites publish, and that page does not have any."
+      );
+    case "recipe-without-ingredients":
+      return "That page's recipe lists no ingredients, so there is nothing to import.";
+    case "recipe-too-large":
+      return "That page's recipe is too long to import.";
+  }
+}
+
 const TYPE_ATTR_RE = /(?:^|\s)type\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i;
 
 /** Guards against a pathologically nested document walking us into a stack overflow. */
@@ -38,6 +64,22 @@ const MAX_DEPTH = 12;
  */
 const MAX_INGREDIENT_LINES = 200;
 const MAX_STEPS = 500;
+
+/**
+ * Caps on the *size* of each string, which the count caps above do not give.
+ *
+ * Without these, one `recipeIngredient` entry may be the whole 2 MB the fetcher
+ * allowed: the fetch deadline is spent by the time this runs, and everything
+ * downstream — line parsing, then tokenising the name against every catalog
+ * entry — happens on the request thread of a single-threaded server.
+ *
+ * These are size guards, not the recipe form's limits. They sit deliberately
+ * above them: `parseRecipeForm` holds a step to 2 000 characters and can say so
+ * in a field the user edits, whereas a refusal here loses the whole import.
+ */
+const MAX_LINE_LENGTH = 1_000;
+const MAX_STEP_LENGTH = 20_000;
+const MAX_NAME_LENGTH = 1_000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -200,16 +242,24 @@ export function extractRecipe(html: string): ExtractResult {
     }
 
     const steps = toSteps(node.recipeInstructions);
+    const name = typeof node.name === "string" ? node.name.trim() : "";
+
     // Fail loudly rather than truncating: a silently shortened ingredient list
     // would be confirmed by the user as if it were the whole recipe.
-    if (ingredientLines.length > MAX_INGREDIENT_LINES || steps.length > MAX_STEPS) {
+    if (
+      ingredientLines.length > MAX_INGREDIENT_LINES ||
+      steps.length > MAX_STEPS ||
+      name.length > MAX_NAME_LENGTH ||
+      ingredientLines.some((line) => line.length > MAX_LINE_LENGTH) ||
+      steps.some((step) => step.length > MAX_STEP_LENGTH)
+    ) {
       return { ok: false, failure: { reason: "recipe-too-large" } };
     }
 
     return {
       ok: true,
       recipe: {
-        name: typeof node.name === "string" ? node.name.trim() : "",
+        name,
         ingredientLines,
         steps,
         recipeYield: toYield(node.recipeYield),

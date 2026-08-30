@@ -21,6 +21,8 @@ export const MAX_LINES = 100;
  *  scaling by `MAX_SERVINGS` cannot reach Infinity. */
 export const MAX_QUANTITY = 1_000_000;
 export const MAX_SERVINGS = 999;
+/** Past what browsers and proxies will carry, so nothing legitimate is this long. */
+export const MAX_URL_LENGTH = 2_048;
 
 /**
  * Density needs a *lower* bound, not just `> 0`.
@@ -58,6 +60,8 @@ export type RecipeDraft = {
   readonly baseServings: number;
   readonly steps: readonly string[];
   readonly lines: readonly DraftLine[];
+  /** The page an import came from; absent for a recipe typed in by hand. */
+  readonly sourceUrl?: string;
 };
 
 /**
@@ -99,6 +103,55 @@ function parseSteps(raw: string, errors: Record<string, string>): string[] {
   }
 
   return steps;
+}
+
+/**
+ * The page an imported recipe came from, or `undefined` for a manual entry.
+ *
+ * The import flow fetches the page through the SSRF guard and then posts the
+ * URL back as a hidden field on the review screen, so what arrives here is
+ * request input like any other — the fetch that vouched for it is over, and a
+ * crafted POST reaches this function with no fetch behind it at all. Hence the
+ * scheme check: `recipes/[id]/page.tsx` renders this as text today, but a
+ * stored `javascript:` URL is one careless `<a href>` away from being live.
+ */
+function parseSourceUrl(raw: string, errors: Record<string, string>): string | undefined {
+  const trimmed = raw.trim();
+  if (trimmed === "") {
+    return undefined;
+  }
+
+  const invalid = "That source link is not an http or https address.";
+  const tooLong = `That source link is too long (${MAX_URL_LENGTH} characters at most).`;
+
+  if (trimmed.length > MAX_URL_LENGTH) {
+    errors["sourceUrl"] = tooLong;
+    return undefined;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    errors["sourceUrl"] = invalid;
+    return undefined;
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    errors["sourceUrl"] = invalid;
+    return undefined;
+  }
+
+  // Measured again after normalisation, not only before it. `new URL`
+  // percent-encodes every non-ASCII character on the way to `href` — "é"
+  // becomes six characters — so a string that fitted the cap on the way in can
+  // come back out several times its length, and `href` is what gets stored.
+  if (url.href.length > MAX_URL_LENGTH) {
+    errors["sourceUrl"] = tooLong;
+    return undefined;
+  }
+
+  return url.href;
 }
 
 /** `undefined` means the line was rejected; the reason is already in `errors`. */
@@ -198,6 +251,7 @@ export function parseRecipeForm(data: FormData): ParsedRecipe {
   }
 
   const steps = parseSteps(text(data, "steps"), errors);
+  const sourceUrl = parseSourceUrl(text(data, "sourceUrl"), errors);
 
   const names = texts(data, "ingredientName");
   const quantities = texts(data, "ingredientQuantity");
@@ -240,7 +294,12 @@ export function parseRecipeForm(data: FormData): ParsedRecipe {
     return { ok: false, message: "Check the fields below.", fieldErrors: errors };
   }
 
-  return { ok: true, value: { name, baseServings, steps, lines } };
+  // Spread rather than an explicit `undefined`, so "typed in by hand" stays a
+  // missing property rather than a present one holding nothing.
+  return {
+    ok: true,
+    value: { name, baseServings, steps, lines, ...(sourceUrl === undefined ? {} : { sourceUrl }) },
+  };
 }
 
 /**

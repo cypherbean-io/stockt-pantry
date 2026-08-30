@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { UNITS, convert, isUnitKey, unitById } from "./units";
+import { UNITS, convert, isUnitKey, unitById, unitKeyOf } from "./units";
 
 /**
  * `unit_id` is a text column, so everything that comes back out of Postgres or
@@ -32,6 +32,20 @@ describe("unitById", () => {
 
   it("returns nothing for an unknown id", () => {
     expect(unitById("furlong")).toBeUndefined();
+  });
+});
+
+describe("unitKeyOf", () => {
+  it("names the id a unit is stored under", () => {
+    // The import line parser hands back the unit itself; a form field needs the
+    // id, and `unit.name` is not it — the millilitre is named "mL" and keyed "ml".
+    expect(unitKeyOf(UNITS.ml)).toBe("ml");
+  });
+
+  it("round-trips every unit in the table", () => {
+    for (const [key, unit] of Object.entries(UNITS)) {
+      expect(unitKeyOf(unit)).toBe(key);
+    }
   });
 });
 
