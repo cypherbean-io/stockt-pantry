@@ -112,6 +112,46 @@ export const invite = pgTable(
   ],
 );
 
+export const session = pgTable(
+  "session",
+  {
+    /**
+     * The SHA-256 of the token in the cookie, never the token. A database read
+     * — a backup, a dump, a stray log line — therefore cannot be replayed as a
+     * live session. It doubles as the primary key because every lookup is by
+     * exactly this value.
+     */
+    tokenHash: text("token_hash").primaryKey(),
+    userId: uuid("user_id").notNull(),
+    /**
+     * Denormalised from `user` for the same reason `recipe_ingredient` carries
+     * it: resolving a cookie to a `HouseholdScope` is then one indexed row read
+     * with no join, on the hot path of every authenticated request. The
+     * composite foreign key below is what keeps it honest — a session cannot
+     * name a household its user does not belong to.
+     */
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => household.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: "session_household_user_fk",
+      columns: [table.householdId, table.userId],
+      foreignColumns: [user.householdId, user.id],
+    }).onDelete("cascade"),
+    // Postgres does not index the referencing side of a foreign key, so without
+    // this both "sign this member out everywhere" and the cascade from a
+    // deleted member are seq scans.
+    index("session_household_user_idx").on(table.householdId, table.userId),
+    // Supports sweeping expired rows; expiry itself is enforced by the
+    // `expires_at > now` predicate on the lookup, not by the sweep.
+    index("session_expires_idx").on(table.expiresAt),
+  ],
+);
+
 /**
  * Units are deployment-wide reference data, not tenant data — there is nothing
  * household-specific about a gram. The primary key is the unit's key rather
@@ -232,6 +272,7 @@ export const recipeIngredient = pgTable(
 export type HouseholdRow = typeof household.$inferSelect;
 export type UserRow = typeof user.$inferSelect;
 export type InviteRow = typeof invite.$inferSelect;
+export type SessionRow = typeof session.$inferSelect;
 export type UnitRow = typeof unit.$inferSelect;
 export type IngredientRow = typeof ingredient.$inferSelect;
 export type PantryItemRow = typeof pantryItem.$inferSelect;

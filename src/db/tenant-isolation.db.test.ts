@@ -1,8 +1,10 @@
+import { eq } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { ingredient, pantryItem, recipe, recipeIngredient } from "./schema";
+import { ingredient, invite, pantryItem, recipe, recipeIngredient, session, user } from "./schema";
 import { unsafeHouseholdScopeFromId, type HouseholdScope } from "./scope";
-import { listInvites, findInviteById } from "./queries/invites";
+import { findHousehold, listMembers } from "./queries/household";
+import { createInvite, listInvites, findInviteById } from "./queries/invites";
 import {
   createIngredient,
   findIngredientById,
@@ -79,6 +81,29 @@ beforeEach(async () => {
   beta = await seedHousehold("Beta");
   scopeA = unsafeHouseholdScopeFromId(alpha.householdId);
   scopeB = unsafeHouseholdScopeFromId(beta.householdId);
+});
+
+describe("household and members", () => {
+  it("resolves only the scope's own household", async () => {
+    expect((await findHousehold(scopeA))?.id).toBe(alpha.householdId);
+    expect((await findHousehold(scopeB))?.id).toBe(beta.householdId);
+  });
+
+  it("lists only the scoped household's members", async () => {
+    const mine = await listMembers(scopeA);
+
+    expect(mine.map((row) => row.id)).toEqual([alpha.userId]);
+  });
+
+  it("never hands a password hash to a caller", async () => {
+    // The member list renders into a page, and server component props are
+    // serialised into the HTML payload.
+    const [member] = await listMembers(scopeA);
+
+    expect(member).toBeDefined();
+    expect(member && "passwordHash" in member).toBe(false);
+    expect(JSON.stringify(await listMembers(scopeA))).not.toContain("placeholder-not-a-real-hash");
+  });
 });
 
 describe("ingredient catalog", () => {
@@ -248,6 +273,46 @@ describe("invites", () => {
   it("does not return another household's invite by id", async () => {
     expect(await findInviteById(scopeA, beta.inviteId)).toBeUndefined();
   });
+
+  it("issues a new invite into the scope's household, not a caller-supplied one", async () => {
+    const created = await createInvite(scopeA, {
+      tokenHash: "hash-of-a-fresh-token",
+      createdBy: alpha.userId,
+      expiresAt: new Date("2030-01-01T00:00:00Z"),
+    });
+
+    expect(created.householdId).toBe(alpha.householdId);
+    expect(await findInviteById(scopeB, created.id)).toBeUndefined();
+  });
+
+  it("cannot issue an invite crediting another household's member", async () => {
+    // `createdBy` is the one caller-supplied id on this path. The composite key
+    // is what stops it naming someone outside the scope's household.
+    const error = await rejection(
+      createInvite(scopeA, {
+        tokenHash: "hash-of-a-borrowed-token",
+        createdBy: beta.userId,
+        expiresAt: new Date("2030-01-01T00:00:00Z"),
+      }),
+    );
+
+    expect(error.code).toBe(FOREIGN_KEY_VIOLATION);
+    expect(error.constraint_name).toBe("invite_household_created_by_fk");
+  });
+
+  it("never hands the token hash back to a caller", async () => {
+    // The redeem path looks an invite up *by* its token hash; a list query that
+    // returned it would put a working invite into whatever renders the page.
+    await createInvite(scopeA, {
+      tokenHash: "hash-that-must-not-escape",
+      createdBy: alpha.userId,
+      expiresAt: new Date("2030-01-01T00:00:00Z"),
+    });
+
+    const listed = await listInvites(scopeA);
+    expect(JSON.stringify(listed)).not.toContain("hash-that-must-not-escape");
+    expect(listed.every((row) => !("tokenHash" in row))).toBe(true);
+  });
 });
 
 describe("database-level cross-tenant integrity", () => {
@@ -303,6 +368,42 @@ describe("database-level cross-tenant integrity", () => {
 
     expect(error.code).toBe(FOREIGN_KEY_VIOLATION);
     expect(error.constraint_name).toBe("recipe_ingredient_household_recipe_fk");
+  });
+
+  it("refuses a session claiming a household its user is not in", async () => {
+    // `session.household_id` is denormalised so resolving a cookie to a scope
+    // needs no join. This is the constraint that makes that safe: a session row
+    // cannot assert a household its member does not belong to, so the
+    // denormalised column cannot drift into a cross-tenant scope.
+    const error = await rejection(
+      db.insert(session).values({
+        tokenHash: "hash-of-a-forged-session",
+        userId: alpha.userId,
+        householdId: beta.householdId,
+        expiresAt: new Date("2030-01-01T00:00:00Z"),
+      }),
+    );
+
+    expect(error.code).toBe(FOREIGN_KEY_VIOLATION);
+    expect(error.constraint_name).toBe("session_household_user_fk");
+  });
+
+  it("revokes a member's sessions and invites when the member is deleted", async () => {
+    await db.insert(session).values({
+      tokenHash: "hash-of-alphas-session",
+      userId: alpha.userId,
+      householdId: alpha.householdId,
+      expiresAt: new Date("2030-01-01T00:00:00Z"),
+    });
+
+    await db.delete(user).where(eq(user.id, alpha.userId));
+
+    expect(await db.select().from(session)).toHaveLength(0);
+    // invite.created_by cascades for the same reason: removing someone revokes
+    // what they issued.
+    expect((await db.select().from(invite)).map((row) => row.householdId)).toEqual([
+      beta.householdId,
+    ]);
   });
 
   it("rejects a zero quantity at the data-entry layer", async () => {

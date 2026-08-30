@@ -15,6 +15,13 @@
       "when": 1788045892535,
       "tag": "0001_seed_units",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788049967027,
+      "tag": "0002_session_table",
+      "breakpoints": true
     }
   ]
 }

@@ -29,9 +29,10 @@ const HOUSEHOLD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * came off a verified session from one that came out of a URL, so
  * `unsafeHouseholdScopeFromId(params.householdId)` would typecheck, produce a
  * perfectly valid scope, and hand the caller someone else's pantry. The `unsafe`
- * prefix is there to make every call site greppable until the auth slice adds
- * `scopeForSession(session)` as the normal way in — at which point this should
- * have exactly two callers: that function, and the tests.
+ * prefix is there to make every call site greppable.
+ *
+ * `scopeForSession()` below is the normal way in, and application code should
+ * use nothing else — the callers of this function are that one and the tests.
  *
  * Throws rather than returning a result union: there is no sensible way to
  * continue serving a request whose household id is malformed, and a scope that
@@ -42,6 +43,30 @@ export function unsafeHouseholdScopeFromId(householdId: string): HouseholdScope 
     throw new Error("Refusing to build a scope from a malformed household id");
   }
   return { householdId } as HouseholdScope;
+}
+
+/**
+ * A session that has already been resolved against the `session` table — the
+ * row existed and had not expired. Only `src/db/queries/auth.ts` produces one;
+ * nothing constructs it from request input.
+ */
+export type VerifiedSession = {
+  readonly userId: string;
+  readonly householdId: string;
+  readonly email: string;
+  readonly expiresAt: Date;
+};
+
+/**
+ * The supported way to get a scope.
+ *
+ * The household id comes off the session row rather than off anything the
+ * request carried, which is the whole point: there is no argument a caller can
+ * pass that redirects this at another tenant. Every page, server action and
+ * route handler that touches tenant data should start here.
+ */
+export function scopeForSession(session: VerifiedSession): HouseholdScope {
+  return unsafeHouseholdScopeFromId(session.householdId);
 }
 
 /** Any table that carries the tenant key. */
