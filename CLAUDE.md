@@ -36,7 +36,7 @@ Not wired up yet — add these rows when the slice lands, don't invent them earl
 
 | Task | Command | Blocked on |
 | --- | --- | --- |
-| Local stack (app + Postgres) | `docker compose up` | no `app` service — needs a Dockerfile and the auth slice; `docker-compose.yml` currently defines `db` only |
+| Local stack (app + Postgres) | `docker compose up` | no `app` service — needs a Dockerfile; `docker-compose.yml` currently defines `db` only |
 
 Prefer running a single test file over the whole suite while iterating.
 
@@ -50,9 +50,24 @@ test, so single-file iteration on the matching engine stays fast.
 <!-- Only what cannot be derived by reading the code: boundaries, invariants,
      and decisions with rationale. Not a directory listing. -->
 
-- Stack: Next.js (App Router) + TypeScript, Drizzle ORM against Postgres, Lucia or
-  Auth.js for email+password sessions in HTTP-only cookies. Packaged as Docker Compose
-  (`app` + `db` services).
+- Stack: Next.js (App Router) + TypeScript, Drizzle ORM against Postgres, email+password
+  sessions in HTTP-only cookies. Packaged as Docker Compose (`app` + `db` services).
+- **Auth has no library, deliberately.** SPEC.md §3 names "Lucia or Auth.js"; Lucia is
+  deprecated (its docs now point at implementing sessions directly) and Auth.js's
+  credentials provider only supports JWT sessions, which contradicts the server-side
+  sessions SPEC.md §3/§4 require. So: `node:crypto` scrypt at OWASP parameters
+  (`src/lib/auth/password.ts`) and a `session` table keyed by the SHA-256 of the cookie
+  token. Do not swap in a hashing or session library without re-reading that trade-off.
+- Auth layering: `src/lib/auth/{password,token,cookie,credentials,signup-token}.ts` are
+  pure and unit-tested; `service.ts` holds the flows and takes an explicit `now` so
+  expiry is testable without faking the clock; `session.ts` is the only place the cookie
+  is read or written. Identity-layer queries that cannot take a scope — signup, login,
+  invite redemption, session lookup — live in `src/db/queries/auth.ts` and are keyed by
+  something already secret, never by a caller-supplied household id.
+- Creating a household is gated on `HOUSEHOLD_SIGNUP_TOKEN` (SPEC.md §2 rules out public
+  signup but still wants many households per deployment). The check **fails closed**:
+  unset means signup is disabled, not unguarded. Joining an existing household ignores it
+  and goes through a single-use invite.
 - Ingredient catalog is scoped **per household**, not global — two households can name
   ingredients independently; there is no shared/cross-household catalog table.
 - Matching engine (recipe-makeable / shopping-list logic) is pure logic with no DB
@@ -121,16 +136,21 @@ test, so single-file iteration on the matching engine stays fast.
   recipe report *makeable* off an empty pantry; a stored `NaN` density slips past the
   `<= 0` guard in `convert` and returns `NaN` instead of "can't verify".
 - Never log a Drizzle error's `.message`. `DrizzleQueryError` formats as
-  `Failed query: <sql>\nparams: <bound values>` — once auth lands that string contains
-  password hashes and invite tokens. Log `error.cause.code` and `.constraint_name`
-  instead; `tenant-isolation.db.test.ts` shows the unwrapping.
+  `Failed query: <sql>\nparams: <bound values>`, and that string now contains password
+  hashes and invite token hashes. Log `error.cause.code` and `.constraint_name` instead;
+  `tenant-isolation.db.test.ts` shows the unwrapping. **Rethrowing one counts as logging
+  it** — Next's default error handler prints whatever escapes, cause chain included. So
+  `src/db/queries/auth.ts` converts every driver error into a fresh `Error` carrying only
+  the SQLSTATE and constraint name, and drops the original rather than attaching it as
+  `cause`. Any new query that binds a secret must do the same.
 - Tests that need Postgres are named `*.db.test.ts`. That suffix, not the directory, is
   what routes a file to the Docker-backed Vitest project — `src/db/validate.test.ts` is
   pure and must stay in the fast one.
 - `unsafeHouseholdScopeFromId()` validates the *shape* of a household id, not that the
   caller is entitled to it. Passing a route parameter to it typechecks and quietly hands
-  over another household's data. The auth slice should add `scopeForSession(session)` and
-  leave this with two callers: that function, and tests.
+  over another household's data. Use `scopeForSession(session)` — or, in a page or
+  action, `requireScope()` from `src/lib/auth/session.ts`. `unsafeHouseholdScopeFromId`
+  should keep exactly two callers: `scopeForSession`, and tests.
 
 - No fallback HTML scraping for recipe import — if a page has no `schema.org/Recipe`
   JSON-LD block, the import fails explicitly. Don't add scraping heuristics; this was a

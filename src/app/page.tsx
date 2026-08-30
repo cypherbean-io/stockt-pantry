@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { PANTRY, RECIPE } from "@/lib/fixtures";
 import { matchRecipe, shoppingList } from "@/lib/matching/match";
 import type { LineStatus, MatchedLine } from "@/lib/matching/types";
@@ -33,6 +35,13 @@ export default function Home() {
   return (
     <main>
       <h1>Stockt Pantry</h1>
+      {/*
+        Still the fixture-driven demo of the matching engine — wiring this page
+        to a real household's pantry is the pantry slice, not the auth one.
+      */}
+      <p>
+        <Link href="/household">Your household</Link>
+      </p>
 
       <h2>
         {result.recipeName} — {result.servings} servings
