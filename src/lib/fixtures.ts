@@ -2,12 +2,13 @@ import type { Ingredient, PantryItem, Recipe } from "./matching/types";
 import { UNITS } from "./matching/units";
 
 /**
- * Hardcoded stand-in for the per-household pantry and recipe rows.
+ * The matching engine's test fixture.
  *
- * This is the skeleton's only data source — it exists so one input can travel
- * end to end through the matching engine and out to the page before Drizzle,
- * Postgres, and auth land. Delete it once those queries are real; nothing here
- * should outlive the DB slice.
+ * It started as the skeleton's only data source, so one input could travel end
+ * to end before Drizzle, Postgres and auth landed. The app reads real rows now
+ * (`src/db/queries/`), and this survives for `match.test.ts` alone: one pantry
+ * and one recipe covering every line status at once, with no database to start.
+ * Nothing outside that test should import it.
  */
 
 const flour: Ingredient = { id: "flour", name: "All-purpose flour", densityGPerMl: 0.53 };

@@ -27,7 +27,8 @@ export default async function PantryPage() {
     <main>
       <h1>Pantry</h1>
       <p>
-        What this household has on the shelf. <Link href="/household">Household</Link>
+        What this household has on the shelf. <Link href="/recipes">Recipes</Link> ·{" "}
+        <Link href="/household">Household</Link>
       </p>
 
       <h2>Add an item</h2>

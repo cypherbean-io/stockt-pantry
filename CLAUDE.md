@@ -137,12 +137,14 @@ test, so single-file iteration on the matching engine stays fast.
   `<= 0` guard in `convert` and returns `NaN` instead of "can't verify".
 - Never log a Drizzle error's `.message`. `DrizzleQueryError` formats as
   `Failed query: <sql>\nparams: <bound values>`, and that string now contains password
-  hashes and invite token hashes. Log `error.cause.code` and `.constraint_name` instead;
+  hashes, invite token hashes, and whole recipes — which SPEC.md §4 keeps out of the logs
+  just as firmly. Log `error.cause.code` and `.constraint_name` instead;
   `tenant-isolation.db.test.ts` shows the unwrapping. **Rethrowing one counts as logging
   it** — Next's default error handler prints whatever escapes, cause chain included. So
-  `src/db/queries/auth.ts` converts every driver error into a fresh `Error` carrying only
-  the SQLSTATE and constraint name, and drops the original rather than attaching it as
-  `cause`. Any new query that binds a secret must do the same.
+  `src/db/redact.ts` converts every driver error into a fresh `Error` carrying only the
+  SQLSTATE and constraint name, and drops the original rather than attaching it as
+  `cause`; `queries/auth.ts`, `queries/recipes.ts` and `queries/ingredients.ts` route
+  through it. Any new query that binds a secret or tenant content must do the same.
 - Tests that need Postgres are named `*.db.test.ts`. That suffix, not the directory, is
   what routes a file to the Docker-backed Vitest project — `src/db/validate.test.ts` is
   pure and must stay in the fast one.

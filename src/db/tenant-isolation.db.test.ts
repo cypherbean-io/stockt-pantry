@@ -25,8 +25,9 @@ import {
   createRecipe,
   deleteRecipe,
   findRecipeById,
-  findRecipeWithIngredients,
+  findRecipeWithLines,
   listRecipes,
+  listRecipesWithLines,
 } from "./queries/recipes";
 import { resetDatabase, seedHousehold, testDb, type SeededHousehold } from "./testing/harness";
 
@@ -171,6 +172,14 @@ describe("ingredient catalog", () => {
     expect(entry.householdId).toBe(alpha.householdId);
     expect(await listIngredients(scopeB)).toHaveLength(2);
   });
+
+  it("keeps the density of an entry that already exists", async () => {
+    // SPEC.md §2 puts editing densities of existing ingredients out of scope,
+    // so resolving a name must not be a back door into overwriting one.
+    const resolved = await findOrCreateIngredient(scopeA, { name: "Flour", densityGPerMl: 9 });
+
+    expect(resolved.densityGPerMl).toBe(0.53);
+  });
 });
 
 describe("pantry items", () => {
@@ -245,14 +254,43 @@ describe("recipes", () => {
   it("does not return another household's recipe ingredient lines", async () => {
     // recipe_ingredient carries no id of its own in the URL space, so the leak
     // to guard is reading B's lines through a guessed recipe id.
-    expect(await findRecipeWithIngredients(scopeA, beta.recipeId)).toBeUndefined();
+    expect(await findRecipeWithLines(scopeA, beta.recipeId)).toBeUndefined();
   });
 
   it("returns its own recipe's ingredient lines", async () => {
-    const found = await findRecipeWithIngredients(scopeA, alpha.recipeId);
+    const found = await findRecipeWithLines(scopeA, alpha.recipeId);
 
-    expect(found?.ingredients).toHaveLength(1);
-    expect(found?.ingredients[0]?.ingredientId).toBe(alpha.ingredientId);
+    expect(found?.lines).toHaveLength(1);
+    expect(found?.lines[0]?.line.ingredientId).toBe(alpha.ingredientId);
+  });
+
+  it("joins recipe lines to the catalog without crossing households", async () => {
+    // Both households have a recipe with one "Flour" line. An unscoped join on
+    // ingredient_id alone would attach Beta's catalog entry to Alpha's line.
+    const found = await findRecipeWithLines(scopeA, alpha.recipeId);
+
+    expect(found?.lines[0]?.ingredient.householdId).toBe(alpha.householdId);
+  });
+
+  it("lists only the scoped household's recipes when listing them with their lines", async () => {
+    const listed = await listRecipesWithLines(scopeA);
+
+    expect(listed.map((row) => row.id)).toEqual([alpha.recipeId]);
+    expect(listed.flatMap((row) => row.lines).map((line) => line.ingredient.householdId)).toEqual([
+      alpha.householdId,
+    ]);
+  });
+
+  it("treats a malformed recipe id as one this household does not have", async () => {
+    // The id comes off a URL segment. Postgres rejects a bad `uuid` literal
+    // outright rather than matching nothing, so without a shape check
+    // `/recipes/nonsense` is a 500 with the statement in the log.
+    expect(await findRecipeWithLines(scopeA, "'; drop table recipe; --")).toBeUndefined();
+  });
+
+  it("does not delete anything when given a malformed recipe id", async () => {
+    expect(await deleteRecipe(scopeA, "not-a-uuid")).toBe(false);
+    expect(await listRecipes(scopeA)).toHaveLength(1);
   });
 
   it("does not delete another household's recipe", async () => {

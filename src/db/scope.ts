@@ -19,8 +19,21 @@ export type HouseholdScope = {
   readonly [scopeBrand]: true;
 };
 
-/** Matches the `uuid` primary key on `household`. */
-const HOUSEHOLD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Matches a `uuid` primary key. */
+const ROW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Whether a string could be a row id at all.
+ *
+ * Ids reach the query layer straight off a URL segment or a form field, and
+ * Postgres rejects a malformed `uuid` literal outright (SQLSTATE 22P02) rather
+ * than matching nothing. That would turn `/recipes/nonsense` into a 500 and put
+ * the failed statement in the log. A query that checks this first answers the
+ * way it answers for any other id that is not this household's.
+ */
+export function isRowId(value: string): boolean {
+  return ROW_ID.test(value);
+}
 
 /**
  * Build a scope from a raw household id.
@@ -39,7 +52,7 @@ const HOUSEHOLD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * can be `undefined` invites callers to fall back to an unscoped query.
  */
 export function unsafeHouseholdScopeFromId(householdId: string): HouseholdScope {
-  if (!HOUSEHOLD_ID.test(householdId)) {
+  if (!isRowId(householdId)) {
     throw new Error("Refusing to build a scope from a malformed household id");
   }
   return { householdId } as HouseholdScope;
