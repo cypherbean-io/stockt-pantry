@@ -160,10 +160,15 @@ test, so single-file iteration on the matching engine stays fast.
 - Shopping list is read-only: checking/confirming an item never writes back to
   `pantry_item`. The user manually re-enters purchases. Don't wire this up even if it
   seems like an obvious convenience — it's an explicit scope cut (SPEC.md §3).
-- Two real recipe sites (allrecipes.com, simplyrecipes.com) return HTTP 403 to a plain
-  `curl`/basic HTTP client from this sandbox (bot/WAF protection, not a network
-  restriction) — don't rely on them for manual E2E import testing or as fixtures; use a
-  local fixture page or a site confirmed to respond to a plain fetch.
+- Several real recipe sites (allrecipes.com, simplyrecipes.com, seriouseats.com,
+  foodnetwork.com) return HTTP 403 to a plain `curl`/basic HTTP client from this sandbox
+  (bot/WAF protection, not a network restriction) — don't rely on them for manual E2E
+  import testing or as fixtures. `bbcgoodfood.com` and `cooking.nytimes.com` do answer,
+  and both carry `schema.org/Recipe` JSON-LD the importer parses.
+- A *local* fixture page cannot be used for manual E2E import testing either: the SSRF
+  guard rejects `localhost`/127.0.0.1 before connecting, which is the point of it. Test
+  the fetch+parse path against one of the public URLs above, and the guard itself against
+  `http://169.254.169.254/` (rejected before any packet leaves).
 
 <!-- BEGIN:nextjs-agent-rules -->
 

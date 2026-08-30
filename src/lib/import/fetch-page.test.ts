@@ -6,6 +6,7 @@ import {
   REQUEST_TIMEOUT_MS,
   describeFailure,
   fetchPage,
+  redactUrlForLog,
 } from "./fetch-page";
 
 const PUBLIC_IP = "93.184.216.34";
@@ -334,5 +335,46 @@ describe("describeFailure", () => {
         result.failure.rejection.reason === "blocked-address" &&
         result.failure.rejection.address,
     ).toBe("10.4.19.22");
+  });
+});
+
+describe("redactUrlForLog", () => {
+  /**
+   * SPEC.md §4 has the fetcher log its target URL and outcome, and in the same
+   * breath says never to log a password. A pasted URL can carry both.
+   */
+
+  it("drops the userinfo a pasted URL carried", () => {
+    // `guardUrl` rejects this URL *because* the userinfo is a credential — and
+    // then the outcome gets logged, which is where it would land in plain text.
+    expect(redactUrlForLog("https://alice:hunter2@example.com/recipe")).toBe(
+      "https://example.com/recipe",
+    );
+  });
+
+  it("drops a query string, which may itself be a signed token", () => {
+    expect(redactUrlForLog("https://example.com/recipe?sig=abc123&t=9")).toBe(
+      "https://example.com/recipe?…",
+    );
+  });
+
+  it("keeps an ordinary URL intact, since that is what makes the log useful", () => {
+    expect(redactUrlForLog("https://example.com/recipes/cookies")).toBe(
+      "https://example.com/recipes/cookies",
+    );
+  });
+
+  it("reduces a non-web scheme to the scheme, which is the whole of what is useful", () => {
+    expect(redactUrlForLog("javascript:alert(document.cookie)")).toBe("<javascript: URL>");
+  });
+
+  it("says nothing about a URL it cannot parse rather than echoing it", () => {
+    expect(redactUrlForLog("not a url")).toBe("<unparseable URL>");
+  });
+
+  it("escapes what it does emit, so a pasted URL cannot forge a log line", () => {
+    const forged = redactUrlForLog("https://example.com/a\nRecipe import: success for b");
+
+    expect(forged).not.toContain("\n");
   });
 });

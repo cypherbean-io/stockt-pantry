@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { extractRecipe } from "./jsonld";
+import { describeExtractFailure, extractRecipe, type JsonLdFailure } from "./jsonld";
 
 /** Wraps a JSON-LD payload in the smallest page that could carry it. */
 function page(jsonLd: unknown, attrs = 'type="application/ld+json"') {
@@ -209,11 +209,65 @@ describe("extractRecipe", () => {
     expect(result.ok === false && result.failure.reason).toBe("recipe-too-large");
   });
 
+  it("refuses a recipe whose ingredient line is longer than an ingredient line", () => {
+    // The count caps do not bound the *size*: one `recipeIngredient` entry may
+    // be the whole 2 MB body the fetcher allowed, and everything downstream
+    // tokenises it against the catalog on the request thread.
+    const result = extractRecipe(
+      page({ ...COOKIES, recipeIngredient: ["x".repeat(5_000)] }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.failure.reason).toBe("recipe-too-large");
+  });
+
+  it("refuses a recipe with a single implausibly long step", () => {
+    const result = extractRecipe(page({ ...COOKIES, recipeInstructions: ["x".repeat(50_000)] }));
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.failure.reason).toBe("recipe-too-large");
+  });
+
+  it("refuses a recipe whose name is longer than a name", () => {
+    const result = extractRecipe(page({ ...COOKIES, name: "x".repeat(5_000) }));
+
+    expect(result.ok).toBe(false);
+    expect(result.ok === false && result.failure.reason).toBe("recipe-too-large");
+  });
+
+  it("keeps an ordinary long step, which the form asks the user to shorten", () => {
+    // The cap here is a size guard, not the form's editable limit. A step of a
+    // few hundred words is a real recipe; rejecting the whole import over one
+    // would be worse than letting `parseRecipeForm` point at the field.
+    const result = extractRecipe(page({ ...COOKIES, recipeInstructions: ["x".repeat(3_000)] }));
+
+    expect(result.ok).toBe(true);
+  });
+
   it("ignores a script block that is not ld+json", () => {
     const html = `<script type="application/json">${JSON.stringify(COOKIES)}</script>`;
     const result = extractRecipe(html);
 
     expect(result.ok).toBe(false);
     expect(result.ok === false && result.failure.reason).toBe("no-jsonld");
+  });
+});
+
+describe("describeExtractFailure", () => {
+  const REASONS: readonly JsonLdFailure["reason"][] = [
+    "no-jsonld",
+    "no-recipe",
+    "recipe-without-ingredients",
+    "recipe-too-large",
+  ];
+
+  it.each(REASONS)("has something to say about %s", (reason) => {
+    expect(describeExtractFailure({ reason })).not.toBe("");
+  });
+
+  it("says a page without a recipe block is not importable rather than blaming the user", () => {
+    // SPEC.md §3: no scraping fallback, so this is the message people will
+    // actually hit. It has to explain the outcome, not just report a failure.
+    expect(describeExtractFailure({ reason: "no-recipe" })).toMatch(/recipe/i);
   });
 });

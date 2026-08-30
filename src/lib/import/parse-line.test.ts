@@ -125,3 +125,18 @@ describe("parseIngredientLine", () => {
     expect(line.name).toBe("dark chocolate, 70% cocoa");
   });
 });
+
+describe("parseIngredientLine, hostile input", () => {
+  it("does not read an Object prototype property name as a unit", () => {
+    // `UNIT_WORDS[word]` resolves "constructor" off the prototype and returns a
+    // function, which escapes the `Unit | null` type: the line would be called
+    // high-confidence with no unit a form could submit, and the review screen
+    // would show no warning on it. That is the silent default SPEC.md §5 rules
+    // out, reachable from any page the importer fetches.
+    const line = parseIngredientLine("2 constructor flour");
+
+    expect(line.unit).toBe(UNITS.count);
+    expect(line.confidence).toBe("medium");
+    expect(line.name).toBe("constructor flour");
+  });
+});

@@ -4,6 +4,7 @@ import {
   MAX_DENSITY,
   MAX_LINES,
   MAX_SERVINGS,
+  MAX_URL_LENGTH,
   MIN_DENSITY,
   parseRecipeForm,
   parseServings,
@@ -245,5 +246,57 @@ describe("parseServings", () => {
     // A bad `?servings=` is a URL someone typed, not an error worth a 500 —
     // but it must not reach the engine and scale every quantity by NaN.
     expect(parseServings(value, 4)).toBe(4);
+  });
+});
+
+describe("parseRecipeForm, source URL", () => {
+  /**
+   * An imported recipe records the page it came from (SPEC.md §3). The review
+   * screen posts it back as a hidden field, so by the time it reaches here it is
+   * request input like any other — the fetch that produced it is long over and
+   * cannot vouch for what was submitted.
+   */
+
+  it("keeps the page a recipe was imported from", () => {
+    const parsed = parseRecipeForm(complete({ sourceUrl: "https://example.com/cookies" }));
+
+    expect(parsed.ok && parsed.value.sourceUrl).toBe("https://example.com/cookies");
+  });
+
+  it.each([
+    ["a form with no source field at all", {}],
+    ["a source field left blank", { sourceUrl: "  " }],
+  ])("records no source for %s", (_label, overrides) => {
+    const parsed = parseRecipeForm(complete(overrides));
+
+    expect(parsed.ok).toBe(true);
+    expect(parsed.ok && "sourceUrl" in parsed.value).toBe(false);
+  });
+
+  it.each([
+    ["a javascript: URL", "javascript:alert(1)"],
+    ["a data: URL", "data:text/html,<script>alert(1)</script>"],
+    ["a file: URL", "file:///etc/passwd"],
+    ["something that is not a URL at all", "not a url"],
+  ])("rejects %s as a source", (_label, value) => {
+    // Only ever rendered as text, never as a link — but a stored `javascript:`
+    // URL is one careless `<a href>` away from being live, and nothing that
+    // reaches here was fetched through the http/https guard.
+    expect(errorFor(complete({ sourceUrl: value }), "sourceUrl")).toBeDefined();
+  });
+
+  it("rejects a source URL longer than a browser would follow", () => {
+    expect(
+      errorFor(complete({ sourceUrl: `https://example.com/${"x".repeat(MAX_URL_LENGTH)}` }), "sourceUrl"),
+    ).toBeDefined();
+  });
+
+  it("rejects a source URL that only exceeds the cap once it is normalised", () => {
+    // Under the cap as submitted, over it as stored: `new URL` percent-encodes
+    // each non-ASCII character to six, and `href` is what gets written.
+    const submitted = `https://example.com/${"\u00e9".repeat(MAX_URL_LENGTH - 100)}`;
+
+    expect(submitted.length).toBeLessThan(MAX_URL_LENGTH);
+    expect(errorFor(complete({ sourceUrl: submitted }), "sourceUrl")).toBeDefined();
   });
 });
