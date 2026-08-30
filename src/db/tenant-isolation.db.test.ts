@@ -8,6 +8,8 @@ import { createInvite, listInvites, findInviteById } from "./queries/invites";
 import {
   createIngredient,
   findIngredientById,
+  findIngredientByName,
+  findOrCreateIngredient,
   listIngredients,
   searchIngredients,
 } from "./queries/ingredients";
@@ -130,6 +132,44 @@ describe("ingredient catalog", () => {
 
     expect(created.householdId).toBe(alpha.householdId);
     expect(await findIngredientById(scopeB, created.id)).toBeUndefined();
+  });
+
+  it("does not return another household's ingredient by name", async () => {
+    // Both households named their entry "Flour", so an unscoped exact-name
+    // lookup would return whichever row Postgres reached first.
+    expect((await findIngredientByName(scopeA, "Flour"))?.id).toBe(alpha.ingredientId);
+    expect((await findIngredientByName(scopeB, "Flour"))?.id).toBe(beta.ingredientId);
+  });
+
+  it("finds nothing by a name only another household uses", async () => {
+    await createIngredient(scopeB, { name: "Semolina" });
+
+    expect(await findIngredientByName(scopeA, "Semolina")).toBeUndefined();
+  });
+
+  it("creates into the scope's household when the name is new to it", async () => {
+    const entry = await findOrCreateIngredient(scopeA, { name: "Semolina" });
+
+    expect(entry.householdId).toBe(alpha.householdId);
+    expect(await findIngredientById(scopeB, entry.id)).toBeUndefined();
+  });
+
+  it("returns its own entry rather than the other household's identical one", async () => {
+    // The unique constraint is on (household_id, name), so "already taken" is
+    // a per-household question. Resolving it against the wrong household would
+    // hand a caller a catalog id it must never see.
+    const entry = await findOrCreateIngredient(scopeA, { name: "Flour" });
+
+    expect(entry.id).toBe(alpha.ingredientId);
+  });
+
+  it("creates its own entry even though the other household has that name", async () => {
+    await createIngredient(scopeB, { name: "Semolina" });
+
+    const entry = await findOrCreateIngredient(scopeA, { name: "Semolina" });
+
+    expect(entry.householdId).toBe(alpha.householdId);
+    expect(await listIngredients(scopeB)).toHaveLength(2);
   });
 });
 
