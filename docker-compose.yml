@@ -1,15 +1,16 @@
 # Local stack for development and self-hosting (SPEC.md §3).
 #
-# The `app` service is not here yet — it needs a Dockerfile and the auth slice
-# before `docker compose up` can serve anything. This file currently brings up
-# Postgres only:
+# Three services, started in that order: `db`, then the one-shot `migrate` job,
+# then `app` once migrations have exited 0.
 #
-#   docker compose up -d db
+#   docker compose up            # whole stack, app on http://127.0.0.1:3000
+#   docker compose up -d db      # just Postgres, for `npm run dev` on the host
 #
 # There is deliberately no default password. A compose file that works out of
 # the box with `postgres`/`postgres` is a compose file someone eventually
 # exposes to a network, so `POSTGRES_PASSWORD` has to come from `.env`
-# (gitignored — copy `.env.example`).
+# (gitignored — copy `.env.example`). Set `APP_PORT` there to publish the app
+# somewhere other than 3000.
 
 services:
   db:
@@ -31,6 +32,55 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+  # One-shot: applies the checked-in Drizzle migrations, then exits. The app
+  # waits for this to exit 0, so a fresh volume is never served against an
+  # empty schema, and a bad migration surfaces as a failed job rather than a
+  # crash-looping web server.
+  migrate:
+    build:
+      context: .
+      target: migrator
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-stockt}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-stockt}
+
+  app:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      # `db` is the compose service name on the internal network. 127.0.0.1
+      # here would be the app container itself, not Postgres.
+      DATABASE_URL: postgres://${POSTGRES_USER:-stockt}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-stockt}
+
+      # Gates household creation (SPEC.md §2). No `:-` default: unset means
+      # signup is closed, which is the intended fail-closed behaviour.
+      HOUSEHOLD_SIGNUP_TOKEN: ${HOUSEHOLD_SIGNUP_TOKEN}
+
+      # Only ever widens, never narrows: the image sets NODE_ENV=production, and
+      # `secureCookies` (src/lib/auth/cookie.ts) already returns true for that,
+      # so the session cookie is Secure and `__Host-` prefixed here whether or
+      # not this is set. Which means browsing the stack over plain
+      # http://127.0.0.1:3000 gets the cookie dropped and login appears to do
+      # nothing. That is the safe direction — do not "fix" it by dropping
+      # NODE_ENV or flipping the default, which would ship a non-Secure session
+      # cookie to real deployments. Terminate TLS in front instead.
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE}
+
+    # Loopback only, matching the db service. Put a TLS-terminating reverse
+    # proxy in front before exposing this beyond the host.
+    ports:
+      - "127.0.0.1:${APP_PORT:-3000}:3000"
 
 volumes:
   pgdata:
