@@ -32,11 +32,36 @@ function connectionString(): string {
   return url;
 }
 
-export function getDb(): Database {
-  if (database === undefined) {
+/**
+ * `postgres()` parses the URL with `new URL()`, and Node's `ERR_INVALID_URL`
+ * `TypeError` carries the entire connection string — password included — in an
+ * own enumerable `input` property. Letting that escape prints the credential
+ * through Next's default error handler, which is the same leak `redact.ts`
+ * prevents for driver errors, so the original is dropped rather than attached
+ * as `cause`.
+ *
+ * A password containing `/`, `?` or `#` is the trigger, and `.env.example`
+ * suggests generating one with a base64 alphabet that includes `/`.
+ */
+function connect(url: string): postgres.Sql {
+  try {
     // postgres.js already parses float8 (OID 701) to a JS number, which is what
     // the matching engine's arithmetic expects — no custom type handler needed.
-    client = postgres(connectionString(), { onnotice: () => {} });
+    return postgres(url, { onnotice: () => {} });
+  } catch (error) {
+    if ((error as { code?: string } | null)?.code === "ERR_INVALID_URL") {
+      throw new Error(
+        "DATABASE_URL is not a valid connection string. Reserved characters " +
+          "(/ ? # @) in the password must be percent-encoded — see .env.example",
+      );
+    }
+    throw new Error("DATABASE_URL could not be used to open a connection");
+  }
+}
+
+export function getDb(): Database {
+  if (database === undefined) {
+    client = connect(connectionString());
     database = drizzle(client, { schema });
   }
   return database;

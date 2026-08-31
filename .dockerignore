@@ -1,0 +1,53 @@
+# Build context excludes.
+#
+# Patterns here are NOT .gitignore patterns. Docker matches the full relative
+# path with Go filepath.Match semantics, where `*` does not cross `/`, so a
+# slash-free pattern is anchored at the context root — `.env` excludes `./.env`
+# and nothing else, while .gitignore's `.env` excludes it at every depth. Hence
+# the `**/` prefixes: without them a nested `deploy/.env` that git correctly
+# refuses to track still lands in an image layer.
+#
+# Note what is NOT excluded: `drizzle/` holds the checked-in migration SQL the
+# `migrator` stage applies, and `src/db/schema.ts` plus `drizzle.config.ts` are
+# what drizzle-kit reads to find it.
+
+.git
+.gitignore
+
+# Secrets never enter the build context, at any depth. The app reads its config
+# from the environment at run time (SPEC.md §4).
+**/.env
+**/.env.*
+!**/.env.example
+**/secrets/
+**/*.pem
+**/*.key
+.mcp.json
+.mcp.json.example
+
+# Rebuilt inside the image.
+.next/
+node_modules/
+**/*.tsbuildinfo
+coverage/
+
+# Not needed to build or migrate.
+**/*.test.ts
+**/*.test.tsx
+src/db/testing/
+docker-compose.yml
+docker-compose.test.yml
+vitest.config.ts
+eslint.config.mjs
+docs/
+init.sh
+LICENSE
+README.md
+SPEC.md
+CLAUDE.md
+.claude/
+plans/
+.vscode/
+.idea/
+.DS_Store
+**/*.swp

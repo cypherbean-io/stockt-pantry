@@ -29,14 +29,9 @@ Next.js 16 (App Router) + React 19 + TypeScript, tests on Vitest. Node 26, npm.
 | Build | `npm run build` |
 | Production server | `npm start` |
 | Dev database | `docker compose up -d db` (needs `POSTGRES_PASSWORD` in `.env`) |
+| Local stack (app + Postgres) | `docker compose up` (needs `POSTGRES_PASSWORD` in `.env`; app on http://localhost:3000) |
 | DB migrations (Drizzle) | `npm run db:generate` then `npm run db:migrate` |
 | Stop the test database | `npm run db:test:down` |
-
-Not wired up yet — add these rows when the slice lands, don't invent them early:
-
-| Task | Command | Blocked on |
-| --- | --- | --- |
-| Local stack (app + Postgres) | `docker compose up` | no `app` service — needs a Dockerfile; `docker-compose.yml` currently defines `db` only |
 
 Prefer running a single test file over the whole suite while iterating.
 
@@ -52,6 +47,14 @@ test, so single-file iteration on the matching engine stays fast.
 
 - Stack: Next.js (App Router) + TypeScript, Drizzle ORM against Postgres, email+password
   sessions in HTTP-only cookies. Packaged as Docker Compose (`app` + `db` services).
+- Packaging: `next.config.ts` sets `output: "standalone"`, and the Dockerfile's `runtime`
+  stage copies only that — no `npm install` in the final image, so `drizzle-kit` (a
+  devDependency) is deliberately absent from it. Migrations therefore run as a **one-shot
+  `migrate` compose service** built from the `migrator` stage, which `app` waits on via
+  `service_completed_successfully`. Do not move migrations into the app's own startup:
+  two replicas would race on the same schema, and a bad migration would present as a
+  crash-looping web server instead of a job that exited non-zero. `src/packaging/`
+  holds guard tests for the parts of this that have actually broken.
 - **Auth has no library, deliberately.** SPEC.md §3 names "Lucia or Auth.js"; Lucia is
   deprecated (its docs now point at implementing sessions directly) and Auth.js's
   credentials provider only supports JWT sessions, which contradicts the server-side
