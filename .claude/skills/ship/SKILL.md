@@ -1,3 +1,4 @@
+---
 name: ship
 description: Push the current branch and open a pull request. Runs pre-push checks, writes the PR body from the commits and spec, and stops before merge.
 disable-model-invocation: true
