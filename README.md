@@ -47,6 +47,8 @@ HTTP-only cookies, implemented directly on `node:crypto` — see
 ## Quick start (Docker Compose)
 
 Everything runs from the compose file: Postgres, a one-shot migration job, and the app.
+For a full walkthrough — reverse proxy, backups, upgrades, and running it as an LXC
+container on Proxmox — see [`docs/INSTALL.md`](docs/INSTALL.md).
 
 ```bash
 cp .env.example .env
