@@ -131,6 +131,26 @@ describe("extractRecipe", () => {
     expect(result.ok === true && result.recipe.name).toBe("Chocolate Chip Cookies");
   });
 
+  it("reads a payload a site wrapped in an HTML comment", () => {
+    const result = extractRecipe(page(`<!--${JSON.stringify(COOKIES)}-->`));
+
+    expect(result.ok === true && result.recipe.name).toBe("Chocolate Chip Cookies");
+  });
+
+  it("reads a payload whose wrapping comment is closed with the --!> variant", () => {
+    // HTML treats "--!>" as a comment end tag too, so a page using it is
+    // wrapping the payload exactly as legitimately as one using "-->".
+    const result = extractRecipe(page(`<!--${JSON.stringify(COOKIES)}--!>`));
+
+    expect(result.ok === true && result.recipe.name).toBe("Chocolate Chip Cookies");
+  });
+
+  it("reads a payload a site wrapped in a CDATA section", () => {
+    const result = extractRecipe(page(`//<![CDATA[${JSON.stringify(COOKIES)}//]]>`));
+
+    expect(result.ok === true && result.recipe.name).toBe("Chocolate Chip Cookies");
+  });
+
   it("fails explicitly when the page has no JSON-LD at all", () => {
     // No scraping fallback in v1 — a page without JSON-LD is a hard failure
     // (SPEC.md §3 Alternatives rejected).
