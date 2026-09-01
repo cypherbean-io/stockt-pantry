@@ -137,10 +137,15 @@ function ldJsonBlocks(html: string): readonly string[] {
 
 function parseBlock(block: string): unknown {
   // Some sites wrap the payload in an HTML comment or a CDATA section.
+  //
+  // "--!>" closes a comment just as "-->" does (HTML §13.2.5.51, the
+  // comment-end-bang state), so both have to come off — matching only "-->"
+  // leaves a stray "--!" that turns a perfectly good recipe into a parse
+  // failure, and is the classic shape of a comment filter a page can slip past.
   const cleaned = block
     .trim()
     .replace(/^<!--/, "")
-    .replace(/-->$/, "")
+    .replace(/--!?>$/, "")
     .replace(/^\/\/\s*<!\[CDATA\[/, "")
     .replace(/\/\/\s*\]\]>$/, "")
     .trim();
