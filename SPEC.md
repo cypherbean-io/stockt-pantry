@@ -110,13 +110,19 @@ Two, both `devDependencies`, both build-time only:
 | `tailwindcss@^4` | The styling foundation | Ships `@tailwindcss/oxide` with per-platform native binaries |
 | `@tailwindcss/postcss@^4` | The PostCSS plugin Next 16 expects | Thin wrapper over the above |
 
+Measured: 12 JavaScript packages (`tailwindcss`, `@tailwindcss/{node,oxide,postcss}`,
+`lightningcss`, `jiti`, `enhanced-resolve`, `tapable`, `graceful-fs`, `@alloc/quick-lru`)
+plus 22 per-platform native binary packages, of which exactly one of each pair installs on
+any given machine.
+
 Plus `@playwright/test` as a `devDependency` for the smoke suite; its browsers are
 downloaded on demand by `npx playwright install chromium` and are not vendored.
 
 Nothing lands in `dependencies`, so nothing enters the runtime image. `next.config.ts`
 keeps `output: "standalone"`, `npm ci` in the Dockerfile's `builder` stage already installs
-devDependencies, and the compiled stylesheet lands in `.next/static/css/` which the
-`runtime` stage already copies. **Risk to watch:** the image is `node:26-alpine` (musl), so
+devDependencies, and the compiled stylesheet lands in `.next/static/chunks/` — Turbopack
+emits it as a chunk rather than into a `css/` directory — which the `runtime` stage already
+copies wholesale. **Risk to watch:** the image is `node:26-alpine` (musl), so
 `npm ci` must resolve `@tailwindcss/oxide-linux-x64-musl`. If that fails the Docker build
 breaks even though the host build is green — §6 verifies the image, not just the host.
 
@@ -130,6 +136,17 @@ Next 16.3.3 runs Turbopack for both `dev` and `build`, and Turbopack resolves th
 project-root PostCSS config first by default, so `experimental.turbopackLocalPostcssConfig`
 is **not** needed and `next.config.ts` is unchanged
 (`next/dist/docs/01-app/03-api-reference/05-config/01-next-config-js/turbopackLocalPostcssConfig.md`).
+
+**Source detection must be scoped explicitly.** Tailwind v4 detects its own sources by
+walking the repository, and it extracts candidate class names by scanning text rather than
+by parsing. Left to itself it read this spec: the first build emitted `mx-auto`,
+`min-h-dvh`, `px-4`, `w-full` and `max-w-4xl` off the code samples in §3.3, and
+`container`, `table`, `hidden`, `inline`, `truncate` and `filter` off ordinary English in
+the surrounding prose — none of which appear anywhere in `src/`. So `globals.css` opens
+with `@import "tailwindcss" source(none);` followed by `@source "../**/*.tsx";`, scoping
+the scan to components only. A handful of false positives survive from JSX attribute
+values (`type="hidden"` yields `.hidden`); that is ~200 bytes and inherent to a scanner,
+and is not worth further effort.
 
 ### 3.2 Token architecture
 
@@ -643,9 +660,9 @@ Then confirm the packaged image, because §3.1's musl risk is not visible from a
 
 ```bash
 docker compose up --build          # needs POSTGRES_PASSWORD in .env
-curl -sI http://localhost:3000/login | head -1              # 200
-curl -s http://localhost:3000/login | grep -o '/_next/static/css/[^"]*' | head -1
-curl -sI "http://localhost:3000$(…that path…)" | head -1    # 200, text/css
+curl -sI http://localhost:3000/login | head -1                         # 200
+css=$(curl -s http://localhost:3000/login | grep -o '/_next/static/chunks/[^"]*\.css' | head -1)
+curl -sI "http://localhost:3000$css" | head -3                         # 200, text/css
 ```
 
 Finally, by eye — the part no assertion covers: `npm run dev`, then walk `/login` →
