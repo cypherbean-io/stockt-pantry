@@ -1,0 +1,30 @@
+/*
+ * The application's single stylesheet, imported once from src/app/layout.tsx.
+ *
+ * SPEC.md §3.2 fills this in with the design tokens — the light/dark custom
+ * properties and the `@theme inline` block that maps them into Tailwind's
+ * utility generation. For now it is the bare import, which is all that is
+ * needed to prove the PostCSS pipeline runs and that `@tailwindcss/oxide`
+ * resolves its native binary inside the musl-based runtime image (SPEC.md §3.1
+ * — that risk is invisible to a build on the host).
+ *
+ * Note that this brings Tailwind's preflight with it, which resets margins,
+ * heading sizes and list markers. Until the pages are restyled (SPEC.md §3.6)
+ * the app is deliberately mid-renovation and will look flatter than it did
+ * unstyled.
+ *
+ * `source(none)` plus an explicit `@source` is not a micro-optimisation. Left to
+ * detect sources by itself, `@tailwindcss/oxide` walks the whole repository and
+ * treats every file it is not told to ignore as a source of class names — which
+ * here meant SPEC.md. It emitted `mx-auto`, `min-h-dvh`, `px-4` and friends off
+ * the code samples in the spec, and `container`, `table`, `hidden`, `truncate`
+ * and `filter` off ordinary English prose in the surrounding paragraphs. None of
+ * those classes exist anywhere in `src/`. Documentation is not source; say so.
+ *
+ * The glob is `.tsx` only, and relative to this file — `..` is `src/`. Class
+ * names only ever appear in components. A `.ts` file that starts building class
+ * strings is a sign the styling belongs in a component, not a reason to widen
+ * this.
+ */
+@import "tailwindcss" source(none);
+@source "../**/*.tsx";
