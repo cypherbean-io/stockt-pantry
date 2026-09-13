@@ -1,17 +1,16 @@
 /*
  * The application's single stylesheet, imported once from src/app/layout.tsx.
  *
- * SPEC.md §3.2 fills this in with the design tokens — the light/dark custom
- * properties and the `@theme inline` block that maps them into Tailwind's
- * utility generation. For now it is the bare import, which is all that is
- * needed to prove the PostCSS pipeline runs and that `@tailwindcss/oxide`
- * resolves its native binary inside the musl-based runtime image (SPEC.md §3.1
- * — that risk is invisible to a build on the host).
+ * Below the import is the design-token layer of SPEC.md §2.2 / §3.2: every
+ * colour, radius, spacing and type decision the app makes, named once and
+ * defined twice — once light, once dark. Nothing outside this file should
+ * contain a colour literal.
  *
- * Note that this brings Tailwind's preflight with it, which resets margins,
- * heading sizes and list markers. Until the pages are restyled (SPEC.md §3.6)
- * the app is deliberately mid-renovation and will look flatter than it did
- * unstyled.
+ * Note that the import brings Tailwind's preflight with it, which resets
+ * margins, heading sizes and list markers. Until the pages are restyled
+ * (SPEC.md §3.6) the app is deliberately mid-renovation and will look flatter
+ * than it did unstyled; the tokens are declared here ahead of anything using
+ * them because the component vocabulary is written against token names.
  *
  * `source(none)` plus an explicit `@source` is not a micro-optimisation. Left to
  * detect sources by itself, `@tailwindcss/oxide` walks the whole repository and
@@ -28,3 +27,219 @@
  */
 @import "tailwindcss" source(none);
 @source "../**/*.tsx";
+
+/*
+ * `dark:` has to answer the same question the token cascade below answers, and
+ * it has to answer it the same way. Rarely needed — the semantic tokens do
+ * almost all of the work, which is the point of having them — but a component
+ * that genuinely needs a different *shape* in dark mode has somewhere to put it.
+ *
+ * Hence two branches, mirroring the two dark blocks. The single-selector form
+ * that only matches `[data-theme="dark"]` looks equivalent and is not: SPEC.md
+ * §3.3 omits the attribute entirely when the theme is "system", and "system" is
+ * the default, so for every user who has never opened the toggle on a
+ * dark-preference OS the tokens would go dark while every `dark:` utility
+ * stayed light. That bug is invisible to whoever builds the toggle, because
+ * pinning dark fires both branches.
+ */
+@custom-variant dark {
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+}
+
+/*
+ * THE CASCADE (SPEC.md §3.2). Three blocks, resolving all four combinations of
+ * OS preference and pinned theme without a line of JavaScript:
+ *
+ *   OS      data-theme   result
+ *   light   absent       light   — only :root matches
+ *   dark    absent       dark    — the media query matches
+ *   dark    "light"      light   — :not([data-theme="light"]) excludes it
+ *   light   "dark"       dark    — the attribute block matches
+ *
+ * The dark values are necessarily written twice: plain CSS has no way to share
+ * one declaration block between a media query and a bare selector. Rather than
+ * pretend otherwise, `src/design/tokens.test.ts` asserts the two blocks declare
+ * the same names with the same values. Edit one, edit the other, or the test
+ * says so.
+ *
+ * Every colour is `oklch()` because lightness in that space is perceptual: a
+ * status chip at L=91% reads as the same weight of tint whether its hue is
+ * green or violet, which is not true of HSL. The chroma values are not round
+ * numbers because sRGB's gamut is lopsided — 0.08 chroma is comfortable at hue
+ * 150 and outside the gamut at hue 25. `tokens.test.ts` checks every one.
+ */
+:root {
+  /*
+   * Not decoration: this is what makes native form controls, scrollbars and
+   * the default caret render dark. Without it a dark page grows white inputs.
+   */
+  color-scheme: light;
+
+  --surface:        oklch(99% 0.002 260);
+  --surface-raised: oklch(100% 0 0);
+  /*
+   * Two borders, because WCAG 2.2 SC 1.4.11 applies to one of them and not the
+   * other. `--border` is a decorative rule — a table divider, a card edge —
+   * where nothing is lost if it is missed, so it is free to be quiet (1.31:1
+   * here, and that is fine). `--border-strong` is the *boundary of a control*,
+   * WCAG's own worked example: the outline that tells you where a text input
+   * begins. That one owes 3:1 against whatever is behind it, so it is a
+   * separate token the contrast test can hold to a separate threshold rather
+   * than a single compromise colour that is too heavy for dividers and too
+   * faint for inputs. Form fields take `border-strong`.
+   */
+  --border:         oklch(90% 0.005 260);
+  --border-strong:  oklch(62% 0.015 260);
+  --ink:            oklch(24% 0.010 260);
+  --ink-muted:      oklch(46% 0.012 260);
+  --accent:         oklch(52% 0.16 258);
+  --accent-ink:     oklch(99% 0 0);
+  --focus:          oklch(58% 0.19 258);
+
+  /*
+   * One pair per match status (SPEC.md §3.5): the chip's fill, and the ink that
+   * goes on it. Colour never carries the meaning alone — every status also has
+   * a glyph and a text label — but the ink must still be readable on the fill,
+   * which is what makes these pairs rather than five independent colours.
+   *
+   * `--status-mixed` sits 25 degrees from `--status-warn` on purpose: both mean
+   * "go and buy something", and the glyph carries the difference. It is a
+   * separate token so the contrast test covers it independently.
+   */
+  --status-ok:          oklch(91% 0.080 150);
+  --status-ok-ink:      oklch(36% 0.080 150);
+  --status-warn:        oklch(91% 0.060 80);
+  --status-warn-ink:    oklch(36% 0.060 80);
+  --status-mixed:       oklch(91% 0.040 55);
+  --status-mixed-ink:   oklch(36% 0.080 55);
+  --status-gap:         oklch(91% 0.035 25);
+  --status-gap-ink:     oklch(36% 0.130 25);
+  --status-unknown:     oklch(91% 0.040 300);
+  --status-unknown-ink: oklch(36% 0.140 300);
+}
+
+/* Follow the OS, unless the user has pinned light. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --surface:        oklch(17% 0.012 260);
+    --surface-raised: oklch(21% 0.014 260);
+    --border:         oklch(32% 0.016 260);
+    --border-strong:  oklch(56% 0.018 260);
+    --ink:            oklch(95% 0.006 260);
+    --ink-muted:      oklch(74% 0.012 260);
+    --accent:         oklch(70% 0.14 258);
+    --accent-ink:     oklch(17% 0.03 258);
+    --focus:          oklch(76% 0.11 258);
+
+    --status-ok:          oklch(30% 0.060 150);
+    --status-ok-ink:      oklch(86% 0.120 150);
+    --status-warn:        oklch(30% 0.050 80);
+    --status-warn-ink:    oklch(86% 0.100 80);
+    --status-mixed:       oklch(30% 0.055 55);
+    --status-mixed-ink:   oklch(86% 0.075 55);
+    --status-gap:         oklch(30% 0.080 25);
+    --status-gap-ink:     oklch(86% 0.070 25);
+    --status-unknown:     oklch(30% 0.090 300);
+    --status-unknown-ink: oklch(86% 0.070 300);
+  }
+}
+
+/* Pinned dark on a light OS. Identical values, enforced by tokens.test.ts. */
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --surface:        oklch(17% 0.012 260);
+  --surface-raised: oklch(21% 0.014 260);
+  --border:         oklch(32% 0.016 260);
+  --border-strong:  oklch(56% 0.018 260);
+  --ink:            oklch(95% 0.006 260);
+  --ink-muted:      oklch(74% 0.012 260);
+  --accent:         oklch(70% 0.14 258);
+  --accent-ink:     oklch(17% 0.03 258);
+  --focus:          oklch(76% 0.11 258);
+
+  --status-ok:          oklch(30% 0.060 150);
+  --status-ok-ink:      oklch(86% 0.120 150);
+  --status-warn:        oklch(30% 0.050 80);
+  --status-warn-ink:    oklch(86% 0.100 80);
+  --status-mixed:       oklch(30% 0.055 55);
+  --status-mixed-ink:   oklch(86% 0.075 55);
+  --status-gap:         oklch(30% 0.080 25);
+  --status-gap-ink:     oklch(86% 0.070 25);
+  --status-unknown:     oklch(30% 0.090 300);
+  --status-unknown-ink: oklch(86% 0.070 300);
+}
+
+/*
+ * `inline` is load-bearing for the colour mappings. Without it Tailwind emits
+ * `--color-surface: var(--surface)` into its own `:root` block and utilities
+ * reference `var(--color-surface)`; with it, `bg-surface` compiles straight to
+ * `background-color: var(--surface)`. Only the second follows the cascade when
+ * `--surface` is redefined further down the tree, which is exactly what the
+ * `[data-theme]` block above does.
+ *
+ * The `--color-*` prefix is Tailwind's namespace, not ours: it is what causes
+ * `bg-ink`, `text-ink`, `border-ink` and `ring-ink` to exist. A token declared
+ * above and missing here is a custom property no utility can reach.
+ */
+@theme inline {
+  --color-surface:        var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-border:         var(--border);
+  --color-border-strong:  var(--border-strong);
+  --color-ink:            var(--ink);
+  --color-ink-muted:      var(--ink-muted);
+  --color-accent:         var(--accent);
+  --color-accent-ink:     var(--accent-ink);
+  --color-focus:          var(--focus);
+
+  --color-status-ok:           var(--status-ok);
+  --color-status-ok-ink:       var(--status-ok-ink);
+  --color-status-warn:         var(--status-warn);
+  --color-status-warn-ink:     var(--status-warn-ink);
+  --color-status-mixed:        var(--status-mixed);
+  --color-status-mixed-ink:    var(--status-mixed-ink);
+  --color-status-gap:          var(--status-gap);
+  --color-status-gap-ink:      var(--status-gap-ink);
+  --color-status-unknown:      var(--status-unknown);
+  --color-status-unknown-ink:  var(--status-unknown-ink);
+
+  /*
+   * Type. The system stack downloads nothing, makes no third-party request
+   * ever, and has no FOUT and no layout shift (SPEC.md §3.2). The cost is that
+   * the app is not pixel-identical between macOS and Linux, which for a
+   * self-hosted household tool is nothing. `--font-mono` is for text meant to
+   * be copied verbatim rather than read as prose — the shopping-list block and
+   * its non-secure-context clipboard fallback (SPEC.md §3.8).
+   */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+               "Liberation Mono", monospace;
+
+  /*
+   * Radius, named by what it wraps rather than by size, so "make the cards
+   * rounder" is one edit here and not a search for `rounded-lg`.
+   */
+  --radius-control: 0.5rem;
+  --radius-card:    0.75rem;
+
+  /*
+   * The one spacing token with a meaning attached: 44 CSS px is the minimum
+   * touch target SPEC.md §2.9 requires and §5's mobile smoke spec measures.
+   * `min-h-tap` / `min-w-tap` state that intent at the call site; `min-h-11`
+   * would not. Tailwind's own `--spacing` base is untouched, so `px-4` and the
+   * rest of the numeric scale still work.
+   */
+  --spacing-tap: 2.75rem;
+}
