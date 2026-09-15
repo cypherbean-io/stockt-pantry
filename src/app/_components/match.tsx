@@ -1,4 +1,6 @@
-import type { LineStatus, MatchResult, MatchedLine } from "@/lib/matching/types";
+import type { MatchResult, MatchedLine } from "@/lib/matching/types";
+
+import { statusLabel } from "./ui/badge";
 
 /**
  * Rendering for a match result.
@@ -7,22 +9,15 @@ import type { LineStatus, MatchResult, MatchedLine } from "@/lib/matching/types"
  * (SPEC.md §3 step 5): "missing" and "short" are fixed by buying something,
  * "unresolved" is fixed by knowing the ingredient's density. A user who cannot
  * tell them apart cannot tell which of those to go and do.
+ *
+ * The status wording moved to `ui/badge.tsx` with the component vocabulary
+ * (SPEC.md §3.6) — that is what paints it, and a second copy of a
+ * user-visible string is a copy that drifts.
  */
-
-const STATUS_LABEL: Record<LineStatus, string> = {
-  have: "have enough",
-  short: "short",
-  missing: "missing",
-  unresolved: "can't verify without a density",
-};
 
 /** Floats out of a unit conversion are long; nobody needs 402.19999999999993 g. */
 export function round(value: number): string {
   return Number(value.toFixed(2)).toString();
-}
-
-export function statusLabel(status: LineStatus): string {
-  return STATUS_LABEL[status];
 }
 
 /** One line for a recipe in a list, where the per-line table is not shown. */
