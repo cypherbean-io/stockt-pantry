@@ -145,6 +145,12 @@ const THEME = block("@theme inline", /@theme\s+inline\s*\{([^}]*)\}/);
  *   SC 1.4.11 does not reach it.
  * - `--focus` on `--surface-raised` as well as `--surface`, because a focus
  *   ring lands on a card more often than on the page background.
+ * - `--status-gap-ink` on both surfaces. It is the only status ink the UI
+ *   paints on a plain background rather than on its own fill: SPEC.md §3.6
+ *   makes it the error colour, replacing the hardcoded `#b00020`, so
+ *   `ui/field.tsx` sets it as field-error text and as the `aria-invalid`
+ *   border. Measuring it only against `--status-gap` would leave the
+ *   combination that actually ships unchecked.
  */
 const PAIRS: ReadonlyArray<readonly [string, string, number]> = [
   ["--ink", "--surface", 4.5],
@@ -163,6 +169,8 @@ const PAIRS: ReadonlyArray<readonly [string, string, number]> = [
   ["--status-warn-ink", "--status-warn", 4.5],
   ["--status-mixed-ink", "--status-mixed", 4.5],
   ["--status-gap-ink", "--status-gap", 4.5],
+  ["--status-gap-ink", "--surface", 4.5],
+  ["--status-gap-ink", "--surface-raised", 4.5],
   ["--status-unknown-ink", "--status-unknown", 4.5],
 ];
 
