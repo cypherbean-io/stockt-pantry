@@ -1,3 +1,5 @@
+import type { ReactElement, ReactNode } from "react";
+import { isValidElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -18,15 +20,42 @@ function classOf(markup: string): string {
   return /class="([^"]*)"/.exec(markup)?.[1] ?? "";
 }
 
-/** The rendered text, with the entities `renderToStaticMarkup` escapes put back. */
-function text(markup: string): string {
-  return markup
-    .replace(/<[^>]*>/g, "")
-    .replace(/&#x27;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&");
+/**
+ * The text a reader would see, walked directly off the React element tree
+ * rather than parsed out of rendered HTML.
+ *
+ * The original version of this helper rendered to a string and stripped tags
+ * with `markup.replace(/<[^>]*>/g, "")`. CodeQL flags that pattern —
+ * `js/incomplete-multi-character-sanitization` — because a single regex pass
+ * over HTML is exactly the class of bug this repo already fixed once, in
+ * `src/lib/import/jsonld.ts` (`js/bad-tag-filter`): a crafted nested or
+ * malformed tag survives one pass and reconstructs into something the pass
+ * was meant to remove. The fix there was a correct comment-end pattern; the
+ * fix here is smaller than that, because there is no HTML to parse in the
+ * first place. React already has the tree before `renderToStaticMarkup` ever
+ * serialises it, and reading that tree directly needs no escaping — or
+ * unescaping — in either direction.
+ */
+function textContent(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textContent).join("");
+  if (!isValidElement(node)) return "";
+
+  const element = node as ReactElement<{ readonly children?: ReactNode }>;
+
+  // A host element (span, svg, path, ...) — its own `children` prop is what a
+  // reader sees nested inside it.
+  if (typeof element.type === "string") return textContent(element.props.children);
+
+  // A function component. Every one reachable from here — `ui/badge.tsx`,
+  // `icons.tsx` — is a plain, hookless Server Component, so calling it
+  // directly with its own props is exactly what rendering it does; there is
+  // no state, effect, ref or context a shallow call like this could get wrong.
+  if (typeof element.type === "function") {
+    return textContent((element.type as (props: unknown) => ReactNode)(element.props));
+  }
+
+  return "";
 }
 
 describe("a status badge", () => {
@@ -44,7 +73,7 @@ describe("a status badge", () => {
   it.each(STATUSES)("says what %s means in words, not only in colour", (status) => {
     // SPEC.md §3.5. Someone who cannot distinguish the fills — or is reading a
     // greyscale screenshot — still gets the whole answer.
-    expect(text(renderToStaticMarkup(<StatusBadge status={status} />))).toBe(statusLabel(status));
+    expect(textContent(<StatusBadge status={status} />)).toBe(statusLabel(status));
   });
 
   it("gives each status a glyph of its own", () => {
