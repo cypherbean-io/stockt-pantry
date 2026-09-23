@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { MatchTable, ShoppingList } from "@/app/_components/match";
+import { PageHeader } from "@/app/_components/ui/page-header";
 import { deleteRecipeAction } from "@/app/actions/recipes";
 import { listPantryWithIngredients } from "@/db/queries/pantry";
 import { findRecipeWithLines } from "@/db/queries/recipes";
@@ -47,11 +47,9 @@ export default async function RecipePage({
   const toBuy = shoppingList(result);
 
   return (
-    <main>
-      <h1>{stored.name}</h1>
-      <p>
-        <Link href="/recipes">All recipes</Link>
-      </p>
+    <>
+      {/* "All recipes" was this page's whole nav line; Recipes is in the shell now. */}
+      <PageHeader title={stored.name} />
       {stored.sourceUrl !== null && (
         <p>
           {/* Imported recipes carry the page they came from. It is a URL a user
@@ -118,6 +116,6 @@ export default async function RecipePage({
           <button type="submit">Yes, delete {stored.name}</button>
         </form>
       </details>
-    </main>
+    </>
   );
 }

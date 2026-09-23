@@ -107,6 +107,45 @@ describe("household and members", () => {
     expect(member && "passwordHash" in member).toBe(false);
     expect(JSON.stringify(await listMembers(scopeA))).not.toContain("placeholder-not-a-real-hash");
   });
+
+  /**
+   * SPEC.md §3.3 put `findHousehold` in the app shell, so a driver error out
+   * of this module now escapes from the root layout on every signed-in route
+   * rather than from `/household` alone. CLAUDE.md: rethrowing a
+   * `DrizzleQueryError` is the same as logging it, because Next's default
+   * error handler prints whatever escapes — and it stringifies as
+   * `Failed query: <sql>\nparams: <bound values>`.
+   *
+   * A malformed uuid is the cheapest way to provoke one (SQLSTATE 22P02).
+   * Reaching it means bypassing `unsafeHouseholdScopeFromId`, which validates
+   * the shape — hence the cast, which is the point of the test rather than a
+   * shortcut in it.
+   */
+  const MALFORMED = "DIGEST-MARKER-NOT-A-UUID";
+  const malformedScope = { householdId: MALFORMED } as unknown as HouseholdScope;
+
+  /** The escaped message, not the driver error `rejection` unwraps to. */
+  async function escapedMessage(query: Promise<unknown>): Promise<string> {
+    try {
+      await query;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+    throw new Error("Expected the query to be rejected, but it succeeded");
+  }
+
+  it.each([
+    ["findHousehold", () => findHousehold(malformedScope)],
+    ["listMembers", () => listMembers(malformedScope)],
+  ])("does not carry the statement or its parameters out of %s", async (_name, run) => {
+    const message = await escapedMessage(run());
+
+    expect(message).not.toContain(MALFORMED);
+    expect(message).not.toContain("params:");
+    expect(message).not.toContain("Failed query");
+    // The SQLSTATE still has to survive, or the failure is undiagnosable.
+    expect(message).toContain("22P02");
+  });
 });
 
 describe("ingredient catalog", () => {

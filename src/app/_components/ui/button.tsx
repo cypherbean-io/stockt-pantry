@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ButtonHTMLAttributes, ReactElement, ReactNode } from "react";
+import type { ComponentPropsWithRef, ReactElement, ReactNode } from "react";
 
 import { cx } from "./class-names";
 
@@ -71,10 +71,15 @@ export function Button({
   className,
   type = "button",
   ...props
-}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "dangerouslySetInnerHTML"> & {
+}: Omit<ComponentPropsWithRef<"button">, "dangerouslySetInnerHTML"> & {
   readonly variant?: ButtonVariant;
   readonly size?: ButtonSize;
 }): ReactElement {
+  // `ComponentPropsWithRef` rather than `ButtonHTMLAttributes` so that `ref`
+  // is among the props the spread below forwards. The header disclosures
+  // (SPEC.md §3.3) put focus back on their trigger when Escape closes them,
+  // and without a ref focus lands on <body> instead — so the next Tab starts
+  // again from the top of the page rather than from the control just used.
   // `dangerouslySetInnerHTML` is omitted rather than merely unused: `{...props}`
   // would forward it, and this is about to be the component every screen
   // renders. `src/` has no raw-HTML sink anywhere today; making one untypeable

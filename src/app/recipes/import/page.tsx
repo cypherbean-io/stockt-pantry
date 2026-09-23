@@ -1,3 +1,4 @@
+import { PageHeader } from "@/app/_components/ui/page-header";
 import { listIngredients } from "@/db/queries/ingredients";
 import { requireScope } from "@/lib/auth/session";
 
@@ -16,9 +17,9 @@ export default async function ImportRecipePage() {
   const catalog = await listIngredients(scope);
 
   return (
-    <main>
-      <h1>Import a recipe</h1>
+    <>
+      <PageHeader title="Import a recipe" />
       <ImportFlow catalog={catalog.map((row) => row.name)} />
-    </main>
+    </>
   );
 }

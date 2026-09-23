@@ -1,5 +1,5 @@
-import Link from "next/link";
-
+import { LinkButton } from "@/app/_components/ui/button";
+import { PageHeader } from "@/app/_components/ui/page-header";
 import { listIngredients } from "@/db/queries/ingredients";
 import { requireScope } from "@/lib/auth/session";
 
@@ -18,14 +18,17 @@ export default async function NewRecipePage() {
   const catalog = await listIngredients(scope);
 
   return (
-    <main>
-      <h1>Add a recipe</h1>
-      <p>
-        <Link href="/recipes">All recipes</Link> ·{" "}
-        <Link href="/recipes/import">Import one from a URL</Link>
-      </p>
+    <>
+      <PageHeader
+        title="Add a recipe"
+        action={
+          <LinkButton href="/recipes/import" variant="secondary" size="sm">
+            Import from a URL
+          </LinkButton>
+        }
+      />
 
       <RecipeForm catalog={catalog.map((row) => row.name)} />
-    </main>
+    </>
   );
 }

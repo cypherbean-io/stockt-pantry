@@ -1,6 +1,8 @@
 import Link from "next/link";
 
 import { summarise } from "@/app/_components/match";
+import { LinkButton } from "@/app/_components/ui/button";
+import { PageHeader } from "@/app/_components/ui/page-header";
 import { listPantryWithIngredients } from "@/db/queries/pantry";
 import { listRecipesWithLines } from "@/db/queries/recipes";
 import { requireScope } from "@/lib/auth/session";
@@ -30,13 +32,26 @@ export default async function RecipesPage() {
     .sort((a, b) => Number(b.result.makeable) - Number(a.result.makeable));
 
   return (
-    <main>
-      <h1>What can I make?</h1>
-      <p>
-        <Link href="/recipes/new">Add a recipe</Link> ·{" "}
-        <Link href="/recipes/import">Import from a URL</Link> ·{" "}
-        <Link href="/pantry">Your pantry</Link> · <Link href="/household">Your household</Link>
-      </p>
+    <>
+      {/*
+        The `·`-separated link line that used to sit here is gone (SPEC.md
+        §3.3): Pantry and Household are navigation and live in the shell now.
+        What is left is contextual — two things to do with recipes — so it goes
+        in the page header's action slot rather than pretending to be a nav.
+      */}
+      <PageHeader
+        title="What can I make?"
+        action={
+          <div className="flex flex-wrap gap-2">
+            <LinkButton href="/recipes/new" variant="secondary" size="sm">
+              Add a recipe
+            </LinkButton>
+            <LinkButton href="/recipes/import" variant="secondary" size="sm">
+              Import from a URL
+            </LinkButton>
+          </div>
+        }
+      />
 
       {pantryRows.length === 0 && (
         <p>
@@ -72,6 +87,6 @@ export default async function RecipesPage() {
           </tbody>
         </table>
       )}
-    </main>
+    </>
   );
 }

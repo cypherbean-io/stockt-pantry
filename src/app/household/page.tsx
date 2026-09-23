@@ -1,6 +1,4 @@
-import Link from "next/link";
-
-import { logOutAction } from "@/app/actions/auth";
+import { PageHeader } from "@/app/_components/ui/page-header";
 import { findHousehold, listMembers } from "@/db/queries/household";
 import { listInvites } from "@/db/queries/invites";
 import { requireScope, requireSession } from "@/lib/auth/session";
@@ -25,12 +23,11 @@ export default async function HouseholdPage() {
   ]);
 
   return (
-    <main>
-      <h1>{household?.name ?? "Household"}</h1>
-      <p>
-        Signed in as {session.email}. <Link href="/recipes">Recipes</Link> ·{" "}
-        <Link href="/pantry">Pantry</Link>
-      </p>
+    <>
+      <PageHeader
+        title={household?.name ?? "Household"}
+        description={`Signed in as ${session.email}.`}
+      />
 
       <h2>Members</h2>
       <ul>
@@ -70,11 +67,12 @@ export default async function HouseholdPage() {
           </tbody>
         </table>
       )}
-
-      <h2>Session</h2>
-      <form action={logOutAction}>
-        <button type="submit">Sign out</button>
-      </form>
-    </main>
+      {/*
+        The <h2>Session</h2> sign-out form that used to close this page is
+        gone. SPEC.md §1 names "Sign out exists in exactly one place" as a
+        defect, and §3.3's fix is the account disclosure in the shell — which
+        is on every screen, including this one. Two of them would just be two.
+      */}
+    </>
   );
 }
