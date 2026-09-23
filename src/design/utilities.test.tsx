@@ -7,7 +7,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { compile } from "tailwindcss";
 import { describe, expect, it } from "vitest";
 
+import { AccountPanel } from "@/app/_components/account-menu";
 import { PlusIcon } from "@/app/_components/icons";
+import { Header } from "@/app/_components/shell";
 import { Badge, STATUS_TONES, StatusBadge } from "@/app/_components/ui/badge";
 import { Button, BUTTON_SIZES, BUTTON_VARIANTS, LinkButton } from "@/app/_components/ui/button";
 import { Card, CardHeader } from "@/app/_components/ui/card";
@@ -79,6 +81,17 @@ const GALLERY = (
       <input id="quantity" name="quantity" className={controlClass} />
     </Field>
     <FormMessage message="Email or password is wrong" />
+
+    {/*
+      The app shell of SPEC.md §3.3, which is where most of the responsive
+      classes in this app live — `sm:` variants that no other test renders and
+      that a browser only disagrees with at one width.
+
+      `AccountPanel` is listed separately because `Header` renders the account
+      menu shut, so the panel's own classes are not in that markup at all.
+    */}
+    <Header householdName="Ashby Road" email="someone@example.test" theme="system" />
+    <AccountPanel email="someone@example.test" />
   </>
 );
 

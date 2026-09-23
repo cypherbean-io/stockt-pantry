@@ -1,5 +1,4 @@
-import Link from "next/link";
-
+import { PageHeader } from "@/app/_components/ui/page-header";
 import { listIngredients } from "@/db/queries/ingredients";
 import { listPantryWithIngredients } from "@/db/queries/pantry";
 import { requireScope } from "@/lib/auth/session";
@@ -24,12 +23,9 @@ export default async function PantryPage() {
   ]);
 
   return (
-    <main>
-      <h1>Pantry</h1>
-      <p>
-        What this household has on the shelf. <Link href="/recipes">Recipes</Link> ·{" "}
-        <Link href="/household">Household</Link>
-      </p>
+    <>
+      {/* Recipes and Household moved to the shell's navigation (SPEC.md §3.3). */}
+      <PageHeader title="Pantry" description="What this household has on the shelf." />
 
       <h2>Add an item</h2>
       <AddPantryItemForm catalog={catalog.map(({ id, name }) => ({ id, name }))} />
@@ -60,6 +56,6 @@ export default async function PantryPage() {
           ))}
         </ul>
       )}
-    </main>
+    </>
   );
 }

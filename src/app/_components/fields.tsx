@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import type { FormState } from "@/app/actions/auth";
 
 import { controlClass, describedBy, Field as FieldShell, FormMessage as Message } from "./ui/field";
+import { PageHeader } from "./ui/page-header";
 
 /**
  * The bits of form markup the three auth pages share.
@@ -58,11 +59,16 @@ export function FormMessage({ state }: { state: FormState }) {
   return <Message message={state?.message} />;
 }
 
+/**
+ * No `<main>` of its own since SPEC.md §3.3: the shell renders the app's one
+ * `<main>`, and a second one nested inside it is invalid markup that the "skip
+ * to content" affordance ignores.
+ */
 export function AuthPage({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <main>
-      <h1>{title}</h1>
+    <>
+      <PageHeader title={title} />
       {children}
-    </main>
+    </>
   );
 }
