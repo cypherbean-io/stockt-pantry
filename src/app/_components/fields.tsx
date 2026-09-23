@@ -2,11 +2,20 @@ import type { ReactNode } from "react";
 
 import type { FormState } from "@/app/actions/auth";
 
+import { controlClass, describedBy, Field as FieldShell, FormMessage as Message } from "./ui/field";
+
 /**
  * The bits of form markup the three auth pages share.
  *
  * Server Components: they render inside client pages but hold no state
  * themselves, and nothing here reads a cookie or touches the database.
+ *
+ * Since SPEC.md §3.6 these are adapters over `ui/field.tsx` rather than markup
+ * of their own. They keep their signatures — `<Field label name type>` and
+ * `<FormMessage state>` — so `/login`, `/signup` and `/join/[token]` are
+ * untouched, and the `#b00020` that used to be inlined here is gone: the error
+ * colour is `--status-gap-ink`, which has a dark variant and a contrast
+ * assertion behind it.
  */
 
 export function Field({
@@ -26,9 +35,10 @@ export function Field({
   error?: string;
   hint?: string;
 }) {
+  // The field's id is its name, as it was before; `describedBy` derives the
+  // hint and error ids from it and `FieldShell` renders them under those ids.
   return (
-    <p style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-      <label htmlFor={name}>{label}</label>
+    <FieldShell id={name} label={label} hint={hint} error={error}>
       <input
         id={name}
         name={name}
@@ -36,27 +46,16 @@ export function Field({
         autoComplete={autoComplete}
         defaultValue={defaultValue}
         required
-        aria-describedby={error === undefined ? undefined : `${name}-error`}
-        aria-invalid={error === undefined ? undefined : true}
+        className={controlClass}
+        {...describedBy(name, { hint: hint !== undefined, error })}
       />
-      {hint !== undefined && <small>{hint}</small>}
-      {error !== undefined && (
-        <small id={`${name}-error`} role="alert" style={{ color: "#b00020" }}>
-          {error}
-        </small>
-      )}
-    </p>
+    </FieldShell>
   );
 }
 
 /** The form-level message, distinct from the per-field ones. */
 export function FormMessage({ state }: { state: FormState }) {
-  if (state?.message === undefined) return null;
-  return (
-    <p role="alert" style={{ color: "#b00020" }}>
-      {state.message}
-    </p>
-  );
+  return <Message message={state?.message} />;
 }
 
 export function AuthPage({ title, children }: { title: string; children: ReactNode }) {

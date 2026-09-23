@@ -1,5 +1,4 @@
-import type { CSSProperties } from "react";
-
+import { controlClass, describedBy, Field } from "@/app/_components/ui/field";
 import type { FieldErrors } from "@/lib/forms";
 import { UNITS, type UnitKey } from "@/lib/matching/units";
 
@@ -10,27 +9,17 @@ import { UNITS, type UnitKey } from "@/lib/matching/units";
  * required text inputs, and these are a number input with a decimal step, an
  * optional one, and a select over the unit table. Bending one component to
  * cover both would take more props than either form has fields.
+ *
+ * Both now sit on `ui/field.tsx` (SPEC.md §3.6), which is where the label,
+ * hint, error and `aria-*` wiring they genuinely do share lives.
  */
 
-const FIELD_STYLE: CSSProperties = { display: "flex", flexDirection: "column", gap: "0.25rem" };
-const ERROR_STYLE: CSSProperties = { color: "#b00020" };
-
-export function FieldError({ id, error }: { id: string; error?: string }) {
-  if (error === undefined) return null;
-  return (
-    <small id={`${id}-error`} role="alert" style={ERROR_STYLE}>
-      {error}
-    </small>
-  );
-}
-
-/** The `aria-*` pair every field here repeats when it has an error to point at. */
-function describedBy(id: string, error: string | undefined) {
-  return {
-    "aria-describedby": error === undefined ? undefined : `${id}-error`,
-    "aria-invalid": error === undefined ? undefined : true,
-  } as const;
-}
+/**
+ * Re-exported because the pantry forms render errors for controls that are not
+ * inside a `Field` — the ingredient picker on the add form is one. Same
+ * component, same `${id}-error` contract.
+ */
+export { FieldError } from "@/app/_components/ui/field";
 
 /**
  * Grouped by dimension so the list reads as three short ones rather than ten
@@ -75,8 +64,7 @@ export function AmountFields({
 
   return (
     <>
-      <p style={FIELD_STYLE}>
-        <label htmlFor={quantityId}>Amount</label>
+      <Field id={quantityId} label="Amount" error={quantityError}>
         {/*
           `type="number"` rather than a text field on purpose: browsers submit
           it with a period decimal separator whatever the user's locale enters,
@@ -91,19 +79,19 @@ export function AmountFields({
           inputMode="decimal"
           defaultValue={defaultQuantity}
           required
-          {...describedBy(quantityId, quantityError)}
+          className={controlClass}
+          {...describedBy(quantityId, { error: quantityError })}
         />
-        <FieldError id={quantityId} error={quantityError} />
-      </p>
+      </Field>
 
-      <p style={FIELD_STYLE}>
-        <label htmlFor={unitId}>Unit</label>
+      <Field id={unitId} label="Unit" error={unitError}>
         <select
           id={unitId}
           name="unitId"
           defaultValue={defaultUnitId}
           required
-          {...describedBy(unitId, unitError)}
+          className={controlClass}
+          {...describedBy(unitId, { error: unitError })}
         >
           {UNIT_GROUPS.map((group) => (
             <optgroup key={group.dimension} label={DIMENSION_LABEL[group.dimension]}>
@@ -115,11 +103,14 @@ export function AmountFields({
             </optgroup>
           ))}
         </select>
-        <FieldError id={unitId} error={unitError} />
-      </p>
+      </Field>
     </>
   );
 }
+
+const DENSITY_HINT =
+  "Only needed to compare a weight against a volume — 0.53 for flour, 0.85 for caster " +
+  "sugar. Leave it blank and those comparisons report “can’t verify”.";
 
 /**
  * Density, which is optional and stays optional.
@@ -128,11 +119,14 @@ export function AmountFields({
  * density makes a mass<->volume comparison report "can't verify" rather than
  * present or absent (SPEC.md §3), which is the honest outcome. Guessing a
  * number to fill the field in would be worse than leaving it empty.
+ *
+ * Which is why `describedBy` is told about the hint as well as the error: that
+ * sentence is the only place the app explains the rule, and a description that
+ * skipped it would hide it from anyone not reading the screen.
  */
 export function DensityField({ error }: { error?: string }) {
   return (
-    <p style={FIELD_STYLE}>
-      <label htmlFor="densityGPerMl">Density in g/mL (optional)</label>
+    <Field id="densityGPerMl" label="Density in g/mL (optional)" hint={DENSITY_HINT} error={error}>
       <input
         id="densityGPerMl"
         name="densityGPerMl"
@@ -140,13 +134,9 @@ export function DensityField({ error }: { error?: string }) {
         min="0"
         step="any"
         inputMode="decimal"
-        {...describedBy("densityGPerMl", error)}
+        className={controlClass}
+        {...describedBy("densityGPerMl", { hint: true, error })}
       />
-      <small>
-        Only needed to compare a weight against a volume — 0.53 for flour, 0.85 for caster
-        sugar. Leave it blank and those comparisons report &ldquo;can&rsquo;t verify&rdquo;.
-      </small>
-      <FieldError id="densityGPerMl" error={error} />
-    </p>
+    </Field>
   );
 }
