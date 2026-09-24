@@ -16,6 +16,12 @@ import { Card, CardHeader } from "@/app/_components/ui/card";
 import { EmptyState } from "@/app/_components/ui/empty-state";
 import { controlClass, Field, FormMessage } from "@/app/_components/ui/field";
 import { PageHeader } from "@/app/_components/ui/page-header";
+import ErrorScreen from "@/app/error";
+import HouseholdLoading from "@/app/household/loading";
+import NotFound from "@/app/not-found";
+import PantryLoading from "@/app/pantry/loading";
+import RecipeLoading from "@/app/recipes/[id]/loading";
+import RecipesLoading from "@/app/recipes/loading";
 import type { LineStatus } from "@/lib/matching/types";
 
 /**
@@ -92,6 +98,22 @@ const GALLERY = (
     */}
     <Header householdName="Ashby Road" email="someone@example.test" theme="system" />
     <AccountPanel email="someone@example.test" />
+
+    {/*
+      The route-level states of SPEC.md §3.7. The four real `loading.tsx`
+      rather than a stand-in built from the same pieces: every bar in them
+      carries its own width and spacing, and a stand-in would leave exactly
+      those uncovered. They are the case this file exists for — a mistyped
+      `bg-borde` compiles to nothing, and a placeholder bar with no background
+      is an invisible one, which is a loading screen that looks finished and
+      empty on every route at once.
+    */}
+    <RecipesLoading />
+    <PantryLoading />
+    <RecipeLoading />
+    <HouseholdLoading />
+    <ErrorScreen error={Object.assign(new Error("boom"), { digest: "9f2a7c1d" })} retry={() => {}} />
+    <NotFound />
   </>
 );
 
