@@ -24,6 +24,7 @@ function readRepoFile(name: string): string {
 const compose = readRepoFile("docker-compose.yml");
 const dockerfile = readRepoFile("Dockerfile");
 const dockerignore = readRepoFile(".dockerignore");
+const errorScreen = readRepoFile("src/app/error.tsx");
 
 /**
  * The Dockerfile with comment lines dropped. Assertions about what the build
@@ -35,6 +36,14 @@ const instructions = dockerfile
   .split("\n")
   .filter((line) => !line.trimStart().startsWith("#"))
   .join("\n");
+
+/**
+ * `src/app/error.tsx` with comments dropped, for the same reason `instructions`
+ * exists above: the file's docstring explains at length why it must never reach
+ * for `error.message`, and naming it there would otherwise trip the very check
+ * that enforces it.
+ */
+const errorScreenCode = errorScreen.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
 
 describe("docker-compose.yml", () => {
   it("defines both services SPEC.md §3 requires", () => {
@@ -145,5 +154,44 @@ describe(".dockerignore", () => {
       expect(entries).not.toContain(needed);
       expect(entries).not.toContain(`${needed}/`);
     }
+  });
+});
+
+/**
+ * Not packaging, but the same kind of guard and read the same way: a rule about
+ * what a file may contain, enforced against its source (SPEC.md §5).
+ */
+describe("src/app/error.tsx", () => {
+  it.each(["error.message", "error.stack", "JSON.stringify(error"])(
+    "never reaches for %s",
+    (forbidden) => {
+      // CLAUDE.md: a `DrizzleQueryError` formats as
+      // `Failed query: <sql>\nparams: <bound values>`, and that string now
+      // carries password hashes, invite token hashes and whole recipes.
+      // `src/db/redact.ts` strips driver errors at the query layer, but this
+      // file is the last place an unredacted error from anywhere else could
+      // reach a screen — and Next forwards the real message in development,
+      // so "production redacts it" is not the guarantee.
+      //
+      // The source, not the behaviour: `route-states.test.tsx` renders a
+      // leaky error and asserts nothing of it appears, which is the stronger
+      // check but only covers the shapes it thinks to build. This one covers
+      // the spelling, whatever the shape.
+      expect(errorScreenCode).not.toContain(forbidden);
+    },
+  );
+
+  it("is asserting that against code, not against an empty string", () => {
+    // The self-test for the comment stripper above. A stripper that returned
+    // "" would make all three assertions pass on a file that rendered the
+    // stack trace in full.
+    expect(errorScreenCode).toContain("retry()");
+    expect(errorScreenCode).toContain("digest");
+  });
+
+  it("is a Client Component, which Next requires of an error boundary", () => {
+    // Without the directive the file is a Server Component and the build
+    // fails on `onClick` — a failure whose message does not mention this.
+    expect(errorScreen).toMatch(/^"use client";/);
   });
 });
