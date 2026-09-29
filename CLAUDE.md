@@ -24,6 +24,8 @@ Next.js 16 (App Router) + React 19 + TypeScript, tests on Vitest. Node 26, npm.
 | Test (pure logic only, no Docker) | `npm test -- --project=unit` |
 | Test (DB integration only) | `npm test -- --project=db` |
 | Test (watch) | `npm run test:watch` |
+| Smoke (Playwright, local only) | `npm run test:e2e` (needs `npx playwright install --with-deps chromium` once) |
+| Everything | `npm run verify` (lint → typecheck → test → test:e2e) |
 | Lint | `npm run lint` (`eslint .`) |
 | Typecheck | `npm run typecheck` (`tsc --noEmit`) |
 | Build | `npm run build` |
@@ -172,6 +174,33 @@ test, so single-file iteration on the matching engine stays fast.
   guard rejects `localhost`/127.0.0.1 before connecting, which is the point of it. Test
   the fetch+parse path against one of the public URLs above, and the guard itself against
   `http://169.254.169.254/` (rejected before any packet leaves).
+- `npm run test:e2e` serves `node .next/standalone/server.js`, **not** `npm start`.
+  `output: "standalone"` makes `next start` print *"next start" does not work with
+  "output: standalone"* — it still serves, so the regression is silent: the suite would
+  be testing a build that is not the one the image ships. The standalone server also
+  needs `.next/static` copied into `.next/standalone/.next/static` (the Dockerfile's
+  runtime stage does the same copy); without it the app comes up with no stylesheet and
+  no client bundle, which takes the nav disclosure and the theme toggle with it.
+- The smoke suite runs against a *production* build, so `secureCookies()` is true and the
+  session cookie is `__Host-`-prefixed and `Secure`. That works over plain HTTP only
+  because `127.0.0.1` is a potentially-trustworthy origin — `e2e/server.ts` must stay
+  loopback. Point it at a LAN address and every spec fails at a redirect to `/login`;
+  `e2e/global-setup.ts` checks for the cookie so that failure names its own cause.
+- Playwright's Chromium needs ~13 system libraries (`libnss3`, `libnspr4`, `libgbm1`, …)
+  that are **not** installed in this sandbox and need root:
+  `npx playwright install --with-deps chromium`. Without them `chromium.launch()` dies
+  with `error while loading shared libraries: libnspr4.so`. To run the suite without
+  installing anything, drive it from the official image instead — the host keeps the
+  database and the build, and `--network host` lets the containerised browser reach it:
+  ```
+  docker compose -f docker-compose.test.yml up -d --wait
+  docker run --rm --network host --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work \
+    -e HOME=/tmp -e TEST_DATABASE_URL="postgres://postgres@127.0.0.1:55432/stockt_test" \
+    mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test
+  ```
+  `--user` matters: without it the container writes root-owned `.next/` and
+  `test-results/` into the working tree. `TEST_DATABASE_URL` makes `global-setup.ts` skip
+  its `docker compose` call, which has no Docker CLI to make inside the container.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

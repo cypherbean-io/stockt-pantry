@@ -30,7 +30,12 @@ export default defineConfig({
         test: {
           name: "unit",
           environment: "node",
-          include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+          // `e2e/` too, but only its `*.test.ts`. The Playwright specs there
+          // are `*.spec.ts` and are matched by `testMatch` in
+          // playwright.config.ts; the split by suffix is what keeps each
+          // runner off the other's files, and a pure helper like
+          // `throwawayDatabaseUrl` should not need a browser to test.
+          include: ["src/**/*.test.ts", "src/**/*.test.tsx", "e2e/**/*.test.ts"],
           exclude: [...defaultExclude, "src/**/*.db.test.ts"],
         },
       },

@@ -21,3 +21,10 @@ node_modules/
 next-env.d.ts
 *.tsbuildinfo
 coverage/
+
+# --- Playwright ---
+# `e2e/.auth/` is a real session cookie for the throwaway database, written by
+# e2e/global-setup.ts. Worthless to anyone, and still never a tracked file.
+e2e/.auth/
+playwright-report/
+test-results/
