@@ -89,6 +89,8 @@ unset locally.
 | Test (DB integration only) | `npm test -- --project=db` |
 | Test (single file) | `npm test -- src/lib/matching/match.test.ts` |
 | Test (watch) | `npm run test:watch` |
+| Smoke test in a browser | `npm run test:e2e` |
+| Everything, in order | `npm run verify` |
 | Lint | `npm run lint` |
 | Typecheck | `npm run typecheck` |
 | Build | `npm run build` |

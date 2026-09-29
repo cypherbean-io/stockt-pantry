@@ -39,6 +39,14 @@ docker-compose.yml
 docker-compose.test.yml
 vitest.config.ts
 eslint.config.mjs
+
+# The smoke suite. `e2e/` matters twice over: .dockerignore does not inherit
+# .gitignore, so an untracked `e2e/.auth/household.json` — a live session
+# cookie — would otherwise be copied into a build layer.
+e2e/
+playwright.config.ts
+playwright-report/
+test-results/
 docs/
 init.sh
 LICENSE
