@@ -6,9 +6,11 @@ import { UNITS } from "./matching/units";
  *
  * It started as the skeleton's only data source, so one input could travel end
  * to end before Drizzle, Postgres and auth landed. The app reads real rows now
- * (`src/db/queries/`), and this survives for `match.test.ts` alone: one pantry
- * and one recipe covering every line status at once, with no database to start.
- * Nothing outside that test should import it.
+ * (`src/db/queries/`), and this survives for the matching tests alone: one
+ * pantry and one recipe covering every line status at once, with no database to
+ * start. `match.test.ts` classifies it, and `summary.test.ts` holds the bucket
+ * classifier against what the engine makes of it. Nothing else should import
+ * it.
  */
 
 const flour: Ingredient = { id: "flour", name: "All-purpose flour", densityGPerMl: 0.53 };
