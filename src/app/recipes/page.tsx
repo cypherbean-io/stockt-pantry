@@ -1,6 +1,5 @@
 import Link from "next/link";
 
-import { summarise } from "@/app/_components/match";
 import { LinkButton } from "@/app/_components/ui/button";
 import { PageHeader } from "@/app/_components/ui/page-header";
 import { listPantryWithIngredients } from "@/db/queries/pantry";
@@ -8,6 +7,7 @@ import { listRecipesWithLines } from "@/db/queries/recipes";
 import { requireScope } from "@/lib/auth/session";
 import { toPantry, toRecipe } from "@/lib/matching/from-storage";
 import { matchRecipe } from "@/lib/matching/match";
+import { summarise } from "@/lib/matching/summary";
 
 /**
  * "What can I cook right now?" — the question the whole app exists to answer

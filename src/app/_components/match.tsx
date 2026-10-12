@@ -13,30 +13,15 @@ import { statusLabel } from "./ui/badge";
  * The status wording moved to `ui/badge.tsx` with the component vocabulary
  * (SPEC.md §3.6) — that is what paints it, and a second copy of a
  * user-visible string is a copy that drifts.
+ *
+ * `summarise` moved to `src/lib/matching/summary.ts` with the four-bucket
+ * classifier (SPEC.md §3.5): it describes a match result rather than paints
+ * one, so it belongs with the pure, exhaustively-tested matching logic.
  */
 
 /** Floats out of a unit conversion are long; nobody needs 402.19999999999993 g. */
 export function round(value: number): string {
   return Number(value.toFixed(2)).toString();
-}
-
-/** One line for a recipe in a list, where the per-line table is not shown. */
-export function summarise(result: MatchResult): string {
-  if (result.makeable) {
-    return "Ready to cook";
-  }
-
-  const toBuy = result.lines.filter(
-    (line) => line.status === "missing" || line.status === "short",
-  ).length;
-  const unresolved = result.lines.filter((line) => line.status === "unresolved").length;
-
-  const parts: string[] = [];
-  if (toBuy > 0) parts.push(`${toBuy} to buy`);
-  if (unresolved > 0) parts.push(`${unresolved} can't verify`);
-  // A recipe with no ingredient lines at all is vacuously makeable, so an
-  // empty `parts` here would mean the counts and `makeable` disagree.
-  return parts.length === 0 ? "Not makeable" : parts.join(", ");
 }
 
 export function MatchTable({ result }: { result: MatchResult }) {
