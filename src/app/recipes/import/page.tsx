@@ -1,3 +1,4 @@
+import { LinkButton } from "@/app/_components/ui/button";
 import { PageHeader } from "@/app/_components/ui/page-header";
 import { listIngredients } from "@/db/queries/ingredients";
 import { requireScope } from "@/lib/auth/session";
@@ -18,7 +19,15 @@ export default async function ImportRecipePage() {
 
   return (
     <>
-      <PageHeader title="Import a recipe" />
+      {/* The mirror of `/recipes/new`, whose header offers the way here. */}
+      <PageHeader
+        title="Import a recipe"
+        action={
+          <LinkButton href="/recipes/new" variant="secondary" size="sm">
+            Type one in instead
+          </LinkButton>
+        }
+      />
       <ImportFlow catalog={catalog.map((row) => row.name)} />
     </>
   );

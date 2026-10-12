@@ -15,13 +15,6 @@ import { UNITS, type UnitKey } from "@/lib/matching/units";
  */
 
 /**
- * Re-exported because the pantry forms render errors for controls that are not
- * inside a `Field` — the ingredient picker on the add form is one. Same
- * component, same `${id}-error` contract.
- */
-export { FieldError } from "@/app/_components/ui/field";
-
-/**
  * Grouped by dimension so the list reads as three short ones rather than ten
  * flat entries, and derived from `UNITS` rather than listed again — a unit
  * added there should appear here without a second edit.

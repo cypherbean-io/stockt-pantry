@@ -1,14 +1,13 @@
 import { notFound } from "next/navigation";
 
-import { MatchTable, ShoppingList } from "@/app/_components/match";
-import { PageHeader } from "@/app/_components/ui/page-header";
-import { deleteRecipeAction } from "@/app/actions/recipes";
 import { listPantryWithIngredients } from "@/db/queries/pantry";
 import { findRecipeWithLines } from "@/db/queries/recipes";
 import { requireScope } from "@/lib/auth/session";
 import { toPantry, toRecipe } from "@/lib/matching/from-storage";
-import { matchRecipe, shoppingList } from "@/lib/matching/match";
-import { MAX_SERVINGS, parseServings } from "@/lib/recipes/form";
+import { matchRecipe } from "@/lib/matching/match";
+import { parseServings } from "@/lib/recipes/form";
+
+import { RecipeScreen } from "./recipe-screen";
 
 /**
  * One recipe: can I make it, at how many servings, and what would I have to buy.
@@ -44,78 +43,18 @@ export default async function RecipePage({
     toPantry(await listPantryWithIngredients(scope)),
     servings,
   );
-  const toBuy = shoppingList(result);
 
   return (
-    <>
-      {/* "All recipes" was this page's whole nav line; Recipes is in the shell now. */}
-      <PageHeader title={stored.name} />
-      {stored.sourceUrl !== null && (
-        <p>
-          {/* Imported recipes carry the page they came from. It is a URL a user
-              pasted, so it is rendered as plain text rather than as a link. */}
-          <small>Imported from {stored.sourceUrl}</small>
-        </p>
-      )}
-
-      <h2>Can I make this?</h2>
-      <form>
-        <label htmlFor="servings">Servings</label>{" "}
-        <input
-          id="servings"
-          name="servings"
-          type="number"
-          min={1}
-          max={MAX_SERVINGS}
-          step={1}
-          defaultValue={servings}
-        />{" "}
-        <button type="submit">Rescale</button>{" "}
-        <small>Recipe is written for {stored.baseServings}.</small>
-      </form>
-
-      <p>
-        <strong>{result.makeable ? "Makeable" : "Not makeable"}</strong>
-        {!result.makeable &&
-          result.lines.some((line) => line.status === "unresolved") &&
-          " — at least one ingredient cannot be checked without a density."}
-      </p>
-
-      <MatchTable result={result} />
-
-      <h2>Shopping list</h2>
-      <p>
-        <small>
-          What is missing or short at {servings} servings. Buying it does not update the pantry —
-          re-enter what you bought yourself.
-        </small>
-      </p>
-      <ShoppingList lines={toBuy} />
-
-      <h2>Steps</h2>
-      {stored.steps.length === 0 ? (
-        <p>No steps recorded.</p>
-      ) : (
-        <ol>
-          {stored.steps.map((step, index) => (
-            // Steps are free text and may repeat, so the position is the only
-            // stable identity available. They are never reordered in place.
-            <li key={index}>{step}</li>
-          ))}
-        </ol>
-      )}
-
-      <h2>Delete</h2>
-      <details>
-        <summary>Delete this recipe</summary>
-        <form action={deleteRecipeAction}>
-          <input type="hidden" name="recipeId" value={stored.id} />
-          <p>
-            <small>This cannot be undone. The ingredients stay in the catalog.</small>
-          </p>
-          <button type="submit">Yes, delete {stored.name}</button>
-        </form>
-      </details>
-    </>
+    <RecipeScreen
+      recipe={{
+        id: stored.id,
+        name: stored.name,
+        baseServings: stored.baseServings,
+        sourceUrl: stored.sourceUrl,
+        steps: stored.steps,
+      }}
+      servings={servings}
+      result={result}
+    />
   );
 }

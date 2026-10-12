@@ -1,10 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useActionState } from "react";
 
 import { signUpAction } from "@/app/actions/auth";
 import { AuthPage, Field, FormMessage } from "@/app/_components/fields";
+import { Button, LinkButton } from "@/app/_components/ui/button";
 import { MIN_PASSWORD_LENGTH } from "@/lib/auth/credentials";
 
 /**
@@ -18,8 +18,18 @@ export default function SignupPage() {
   const [state, action, pending] = useActionState(signUpAction, undefined);
 
   return (
-    <AuthPage title="Create a household">
-      <form action={action}>
+    <AuthPage
+      title="Create a household"
+      footer={
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          Already have an account?
+          <LinkButton href="/login" variant="secondary" size="sm">
+            Sign in
+          </LinkButton>
+        </p>
+      }
+    >
+      <form action={action} className="flex flex-col gap-4">
         <FormMessage state={state} />
         <Field
           label="Signup token"
@@ -48,14 +58,10 @@ export default function SignupPage() {
           hint={`At least ${MIN_PASSWORD_LENGTH} characters. Length is all that is checked — a passphrase is fine.`}
           error={state?.fieldErrors?.password}
         />
-        <button type="submit" disabled={pending}>
+        <Button type="submit" disabled={pending} className="w-full">
           {pending ? "Creating…" : "Create household"}
-        </button>
+        </Button>
       </form>
-
-      <p>
-        Already have an account? <Link href="/login">Sign in</Link>.
-      </p>
     </AuthPage>
   );
 }

@@ -1,10 +1,4 @@
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import { renderToStaticMarkup } from "react-dom/server";
-import { compile } from "tailwindcss";
 import { describe, expect, it } from "vitest";
 
 import { AccountPanel } from "@/app/_components/account-menu";
@@ -24,6 +18,8 @@ import RecipeLoading from "@/app/recipes/[id]/loading";
 import RecipesLoading from "@/app/recipes/loading";
 import type { LineStatus } from "@/lib/matching/types";
 
+import { classCandidates, compileCandidates, selectorPattern } from "./utilities";
+
 /**
  * The component vocabulary of SPEC.md §3.6 is, almost entirely, class names in
  * string literals. Nothing else in the suite can tell `bg-surface-raised` from
@@ -33,14 +29,12 @@ import type { LineStatus } from "@/lib/matching/types";
  * dark background is invisible text rather than an obvious break.
  *
  * So: render the whole vocabulary, harvest every class it actually ships, and
- * put each one through the real compiler against the real `globals.css`. A
- * token dropped from `@theme inline` fails here too — `--surface-raised`
- * declared but not mapped generates no `bg-surface-raised`, which is exactly
- * the failure `tokens.test.ts` cannot see from the stylesheet alone.
- *
- * This uses `tailwindcss` directly rather than the PostCSS plugin. Both are
- * already devDependencies; the plugin would add a `postcss` import for a
- * wrapper this needs nothing from.
+ * put each one through the real compiler against the real `globals.css`
+ * (`./utilities.ts`). A token dropped from `@theme inline` fails here too —
+ * `--surface-raised` declared but not mapped generates no `bg-surface-raised`,
+ * which is exactly the failure `tokens.test.ts` cannot see from the
+ * stylesheet alone. `src/app/screens.test.tsx` does the same for the screens
+ * built out of this vocabulary.
  */
 
 const STATUSES: readonly LineStatus[] = ["have", "short", "missing", "unresolved"];
@@ -118,48 +112,9 @@ const GALLERY = (
 );
 
 /** What the browser would actually receive, deduplicated. */
-const CANDIDATES: readonly string[] = [
-  ...new Set(
-    [...renderToStaticMarkup(GALLERY).matchAll(/class="([^"]*)"/g)]
-      .flatMap((match) => (match[1] ?? "").split(/\s+/))
-      .filter((candidate) => candidate !== ""),
-  ),
-].sort();
+const CANDIDATES = classCandidates(renderToStaticMarkup(GALLERY));
 
-const require = createRequire(import.meta.url);
-const stylesheet = fileURLToPath(new URL("../app/globals.css", import.meta.url));
-
-const compiler = await compile(readFileSync(stylesheet, "utf8"), {
-  base: dirname(stylesheet),
-  loadStylesheet: async (id: string, base: string) => {
-    // `@import "tailwindcss"` is a package, the imports inside it are relative.
-    const file = id.startsWith(".")
-      ? resolve(base, id)
-      : require.resolve(id === "tailwindcss" ? "tailwindcss/index.css" : id);
-
-    return { path: file, base: dirname(file), content: readFileSync(file, "utf8") };
-  },
-});
-
-const compiled = compiler.build([...CANDIDATES]);
-
-/**
- * The selector Tailwind writes for a candidate: `sm:flex` becomes `.sm\:flex`.
- *
- * Matched with a trailing boundary, because `compiled` is one string holding
- * every rule and a plain substring test passes for any candidate that is a
- * *prefix* of a real one. `bg-surface-raise` compiles to nothing and would
- * still be found inside `.bg-surface-raised` — which is precisely the typo
- * this file exists to catch, so the boundary is the assertion, not a detail.
- *
- * Two layers of escaping: Tailwind escapes the selector, then the regex has to
- * escape Tailwind's backslashes.
- */
-function selectorPattern(candidate: string): RegExp {
-  const selector = `.${candidate.replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`)}`;
-
-  return new RegExp(`${selector.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&")}(?![\\w-])`);
-}
+const compiled = await compileCandidates(CANDIDATES);
 
 describe("the classes the component vocabulary ships", () => {
   it("are actually collected from the rendered markup", () => {

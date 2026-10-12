@@ -4,6 +4,8 @@ import { useActionState } from "react";
 
 import { removePantryItemAction, updatePantryItemAction } from "@/app/actions/pantry";
 import { FormMessage } from "@/app/_components/fields";
+import { Button } from "@/app/_components/ui/button";
+import { Card } from "@/app/_components/ui/card";
 
 import { AmountFields } from "./fields";
 
@@ -24,54 +26,60 @@ export type PantryListItem = {
   readonly densityGPerMl: number | null;
 };
 
-const ROW_STYLE = {
-  borderTop: "1px solid #ddd",
-  display: "flex",
-  flexWrap: "wrap",
-  alignItems: "flex-end",
-  gap: "1rem",
-  padding: "0.75rem 0",
-} as const;
-
-const FORM_STYLE = { display: "flex", alignItems: "flex-end", gap: "0.5rem" } as const;
-
 export function PantryRow({ item }: { item: PantryListItem }) {
   const [updateState, update, saving] = useActionState(updatePantryItemAction, undefined);
   const [removeState, remove, removing] = useActionState(removePantryItemAction, undefined);
 
   return (
-    <li style={ROW_STYLE}>
-      {/* A div, not a span: `FormMessage` renders a paragraph. */}
-      <div style={{ flexBasis: "100%" }}>
-        <strong>{item.name}</strong>{" "}
-        <small>
+    <Card as="li" className="flex flex-col gap-3">
+      <div>
+        {/* h3 under the page's "On the shelf" h2, so a screen reader can jump item to item. */}
+        <h3 className="font-semibold text-ink">{item.name}</h3>
+        <p className="text-sm text-ink-muted">
           {item.densityGPerMl === null
             ? "no density — weight/volume comparisons report “can’t verify”"
             : `${item.densityGPerMl} g/mL`}
-        </small>
-        <FormMessage state={updateState} />
-        <FormMessage state={removeState} />
+        </p>
       </div>
 
-      <form action={update} style={FORM_STYLE}>
-        <input type="hidden" name="id" value={item.id} />
-        <AmountFields
-          idPrefix={item.id}
-          defaultQuantity={String(item.quantity)}
-          defaultUnitId={item.unitId}
-          fieldErrors={updateState?.fieldErrors}
-        />
-        <button type="submit" disabled={saving}>
-          {saving ? "Saving…" : "Save"}
-        </button>
-      </form>
+      <FormMessage state={updateState} />
+      <FormMessage state={removeState} />
 
-      <form action={remove}>
-        <input type="hidden" name="id" value={item.id} />
-        <button type="submit" disabled={removing}>
-          {removing ? "Removing…" : "Remove"}
-        </button>
-      </form>
-    </li>
+      {/*
+        Two forms side by side, because forms do not nest. On a phone the
+        update form takes the whole width — amount and unit share a row, Save
+        takes the next — and Remove wraps under it rather than squeezing the
+        inputs beside it. From `sm` up it is one line.
+      */}
+      <div className="flex flex-wrap items-end gap-3">
+        <form
+          action={update}
+          className="grid w-full grid-cols-2 items-end gap-3 sm:w-auto sm:flex-1 sm:grid-cols-3"
+        >
+          <input type="hidden" name="id" value={item.id} />
+          <AmountFields
+            idPrefix={item.id}
+            defaultQuantity={String(item.quantity)}
+            defaultUnitId={item.unitId}
+            fieldErrors={updateState?.fieldErrors}
+          />
+          <Button
+            type="submit"
+            variant="secondary"
+            disabled={saving}
+            className="col-span-2 sm:col-span-1"
+          >
+            {saving ? "Saving…" : "Save"}
+          </Button>
+        </form>
+
+        <form action={remove}>
+          <input type="hidden" name="id" value={item.id} />
+          <Button type="submit" variant="ghost" disabled={removing}>
+            {removing ? "Removing…" : "Remove"}
+          </Button>
+        </form>
+      </div>
+    </Card>
   );
 }

@@ -4,6 +4,7 @@ import { useActionState } from "react";
 
 import { joinAction } from "@/app/actions/auth";
 import { Field, FormMessage } from "@/app/_components/fields";
+import { Button } from "@/app/_components/ui/button";
 import { MIN_PASSWORD_LENGTH } from "@/lib/auth/credentials";
 
 /**
@@ -16,7 +17,7 @@ export function JoinForm({ token }: { token: string }) {
   const [state, action, pending] = useActionState(joinAction, undefined);
 
   return (
-    <form action={action}>
+    <form action={action} className="flex flex-col gap-4">
       <input type="hidden" name="inviteToken" value={token} />
       <FormMessage state={state} />
       <Field
@@ -34,9 +35,9 @@ export function JoinForm({ token }: { token: string }) {
         hint={`At least ${MIN_PASSWORD_LENGTH} characters.`}
         error={state?.fieldErrors?.password}
       />
-      <button type="submit" disabled={pending}>
+      <Button type="submit" disabled={pending} className="w-full">
         {pending ? "Joining…" : "Join household"}
-      </button>
+      </Button>
     </form>
   );
 }
