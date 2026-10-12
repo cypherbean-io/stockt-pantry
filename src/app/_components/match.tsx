@@ -1,6 +1,7 @@
 import type { MatchResult, MatchedLine } from "@/lib/matching/types";
 
-import { statusLabel } from "./ui/badge";
+import { StatusBadge } from "./ui/badge";
+import { DataTable } from "./ui/data-table";
 
 /**
  * Rendering for a match result.
@@ -24,34 +25,34 @@ export function round(value: number): string {
   return Number(value.toFixed(2)).toString();
 }
 
+/**
+ * A `DataTable`, so below `sm` each line is a card (SPEC.md §3.6), and the
+ * status is a `StatusBadge` — token, glyph and words — rather than the words
+ * alone in a cell the same weight as the ingredient's name.
+ */
 export function MatchTable({ result }: { result: MatchResult }) {
   if (result.lines.length === 0) {
-    return <p>This recipe has no ingredients listed.</p>;
+    return <p className="text-ink-muted">This recipe has no ingredients listed.</p>;
   }
 
   return (
-    <table>
-      <thead>
-        <tr>
-          <th align="left">Ingredient</th>
-          <th align="left">Needed</th>
-          <th align="left">Have (in the recipe&rsquo;s unit)</th>
-          <th align="left">Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {result.lines.map((line) => (
-          <tr key={line.ingredient.id}>
-            <td>{line.ingredient.name}</td>
-            <td>
-              {round(line.required.value)} {line.required.unit.name}
-            </td>
-            <td>{line.available === null ? "—" : round(line.available)}</td>
-            <td>{statusLabel(line.status)}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <DataTable
+      label="Ingredients against the pantry"
+      rows={result.lines}
+      rowKey={(line) => line.ingredient.id}
+      rowHeader={{ header: "Ingredient", cell: (line) => line.ingredient.name }}
+      columns={[
+        {
+          header: "Needed",
+          cell: (line) => `${round(line.required.value)} ${line.required.unit.name}`,
+        },
+        {
+          header: "Have (in the recipe’s unit)",
+          cell: (line) => (line.available === null ? "—" : round(line.available)),
+        },
+        { header: "Status", cell: (line) => <StatusBadge status={line.status} /> },
+      ]}
+    />
   );
 }
 
@@ -61,14 +62,20 @@ export function MatchTable({ result }: { result: MatchResult }) {
  */
 export function ShoppingList({ lines }: { lines: readonly MatchedLine[] }) {
   if (lines.length === 0) {
-    return <p>Nothing to buy.</p>;
+    return <p className="text-ink-muted">Nothing to buy.</p>;
   }
 
   return (
-    <ul>
+    <ul className="divide-y divide-border rounded-card border border-border bg-surface-raised">
       {lines.map((line) => (
-        <li key={line.ingredient.id}>
-          {line.ingredient.name}: {round(line.shortfall)} {line.required.unit.name}
+        <li
+          key={line.ingredient.id}
+          className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 py-3"
+        >
+          <span className="text-ink">{line.ingredient.name}</span>
+          <span className="font-medium text-ink tabular-nums">
+            {round(line.shortfall)} {line.required.unit.name}
+          </span>
         </li>
       ))}
     </ul>

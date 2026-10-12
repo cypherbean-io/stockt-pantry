@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -280,5 +281,69 @@ describe("@theme inline", () => {
         true,
       );
     }
+  });
+});
+
+/* ------------------------------------------------------------ the screens */
+
+/**
+ * Every component under `src/app/`, as code. Comments are stripped because
+ * several files explain, in prose, the `#b00020` they no longer contain — and
+ * a guard satisfied or tripped by a docstring is guarding the wrong thing.
+ * Only whole-line `//` comments go: a trailing one cannot be told from the
+ * `//` inside an `https://` string without parsing, and leaving it in can only
+ * make this stricter.
+ */
+const APP_DIRECTORY = fileURLToPath(new URL("../app/", import.meta.url));
+
+function code(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+}
+
+const SCREENS = readdirSync(APP_DIRECTORY, { recursive: true, encoding: "utf8" })
+  .filter((path) => path.endsWith(".tsx"))
+  .map((path) => ({ path, source: code(readFileSync(`${APP_DIRECTORY}${path}`, "utf8")) }));
+
+/**
+ * `#rgb` through `#rrggbbaa`, and every CSS colour function. The lookbehind
+ * keeps `&#8217;` — a numeric HTML entity, not a colour — out of it.
+ */
+const COLOUR_LITERAL = /(?<![&\w])#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/;
+
+/** `style={…}` on any element: the route by which a literal skips the tokens. */
+const INLINE_STYLE = /\bstyle=\{/;
+
+describe("the screens", () => {
+  it("are read from the real source tree", () => {
+    // A walk that found nothing would pass both checks below vacuously.
+    expect(SCREENS.length).toBeGreaterThan(30);
+  });
+
+  it("recognise a colour literal in every spelling that has been in this repo", () => {
+    // The self-test. `#b00020` and `#8a5000` were the error and warning
+    // colours, `#ddd` the pantry's row rule; an entity is not a colour.
+    expect(COLOUR_LITERAL.test('style={{ color: "#b00020" }}')).toBe(true);
+    expect(COLOUR_LITERAL.test('borderTop: "1px solid #ddd"')).toBe(true);
+    expect(COLOUR_LITERAL.test("rgb(0 0 0 / 50%)")).toBe(true);
+    expect(COLOUR_LITERAL.test("the recipe&#8217;s unit")).toBe(false);
+    expect(COLOUR_LITERAL.test('className="text-status-gap-ink"')).toBe(false);
+  });
+
+  it.each(SCREENS.map(({ path }) => path))("%s contains no colour literal", (path) => {
+    // SPEC.md §5: the regression guard for `#b00020` creeping back in. A
+    // literal has no dark variant and no contrast assertion behind it — the
+    // tokens in globals.css have both, and are the only colours the app paints.
+    const source = SCREENS.find((screen) => screen.path === path)?.source ?? "";
+
+    expect(source).not.toMatch(COLOUR_LITERAL);
+  });
+
+  it.each(SCREENS.map(({ path }) => path))("%s sets no inline style", (path) => {
+    // SPEC.md §1 counts eight ad-hoc inline style objects as a defect, and §4
+    // counts removing them as a step toward a strict CSP. Every one of them
+    // held a layout or colour decision that belongs in a class.
+    const source = SCREENS.find((screen) => screen.path === path)?.source ?? "";
+
+    expect(source).not.toMatch(INLINE_STYLE);
   });
 });

@@ -3,6 +3,17 @@
 import { useActionState, useRef, useState } from "react";
 
 import { createRecipeAction } from "@/app/actions/recipes";
+import { HalfCircleIcon, PlusIcon } from "@/app/_components/icons";
+import { Button } from "@/app/_components/ui/button";
+import { Card } from "@/app/_components/ui/card";
+import {
+  controlClass,
+  describedBy,
+  Field,
+  FieldError,
+  FormMessage,
+} from "@/app/_components/ui/field";
+import { Section } from "@/app/_components/ui/section";
 import { UNITS } from "@/lib/matching/units";
 import type { ImportDraft } from "@/lib/recipes/import-draft";
 import { MAX_SERVINGS } from "@/lib/recipes/form";
@@ -68,14 +79,14 @@ function draftRows(draft: ImportDraft): readonly Row[] {
   }));
 }
 
-function Problem({ message }: { message: string | undefined }) {
-  if (message === undefined) return null;
-  return (
-    <small role="alert" style={{ color: "#b00020" }}>
-      {message}
-    </small>
-  );
-}
+/**
+ * What the import review flags for a second look. `--status-warn` with its own
+ * ink, because it is the "check this" colour everywhere else in the app, and
+ * the half-circle glyph beside it so the colour is not carrying it alone
+ * (SPEC.md §3.5).
+ */
+const WARNING =
+  "flex items-start gap-2 rounded-control bg-status-warn px-3 py-2 text-sm text-status-warn-ink";
 
 export function RecipeForm({
   catalog,
@@ -112,197 +123,220 @@ export function RecipeForm({
   const errorFor = (field: string) => state?.fieldErrors?.[field];
 
   return (
-    <form action={action}>
-      {state?.message !== undefined && (
-        <p role="alert" style={{ color: "#b00020" }}>
-          {state.message}
-        </p>
-      )}
+    <form action={action} className="flex flex-col gap-6">
+      <FormMessage message={state?.message} />
 
       {/* The page an import came from, so the saved recipe records it
           (SPEC.md §3). Hidden, so it is request input by the time it comes back
           — `parseRecipeForm` re-checks the scheme rather than trusting it. */}
       {initial !== undefined && <input type="hidden" name="sourceUrl" value={initial.sourceUrl} />}
-      <Problem message={errorFor("sourceUrl")} />
+      {/* A form-level message: the field it is about is hidden, so there is
+          nothing on screen to put it beside. */}
+      <FormMessage message={errorFor("sourceUrl")} />
 
-      <p style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-        <label htmlFor="name">Recipe name</label>
-        <input
-          id="name"
-          name="name"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          required
-          aria-invalid={errorFor("name") === undefined ? undefined : true}
-        />
-        <Problem message={errorFor("name")} />
-      </p>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="sm:col-span-2">
+          <Field id="name" label="Recipe name" error={errorFor("name")}>
+            <input
+              id="name"
+              name="name"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              required
+              className={controlClass}
+              {...describedBy("name", { error: errorFor("name") })}
+            />
+          </Field>
+        </div>
 
-      <p style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-        <label htmlFor="baseServings">Serves</label>
-        <input
+        <Field
           id="baseServings"
-          name="baseServings"
-          type="number"
-          min={1}
-          max={MAX_SERVINGS}
-          step={1}
-          value={baseServings}
-          onChange={(event) => setBaseServings(event.target.value)}
-          required
-          aria-invalid={errorFor("baseServings") === undefined ? undefined : true}
-        />
-        <small>How many the quantities below are written for. You can rescale later.</small>
-        {initial?.servingsStated === false && (
-          <small>
-            <strong>The page did not say how many this serves.</strong> This is a guess — correct
-            it, or every rescaling of this recipe will be off by the same factor.
-          </small>
-        )}
-        <Problem message={errorFor("baseServings")} />
-      </p>
+          label="Serves"
+          hint="How many the quantities below are written for. You can rescale later."
+          error={errorFor("baseServings")}
+        >
+          <input
+            id="baseServings"
+            name="baseServings"
+            type="number"
+            min={1}
+            max={MAX_SERVINGS}
+            step={1}
+            value={baseServings}
+            onChange={(event) => setBaseServings(event.target.value)}
+            required
+            className={controlClass}
+            {...describedBy("baseServings", { hint: true, error: errorFor("baseServings") })}
+          />
+        </Field>
+      </div>
 
-      <h2>Ingredients</h2>
-      <p>
-        <small>
-          A name that is not already in the catalog is added to it. Density is only used when
-          that happens, and only matters for converting between weight and volume.
-        </small>
-      </p>
+      {initial?.servingsStated === false && (
+        <p className={WARNING}>
+          <HalfCircleIcon className="mt-1 shrink-0" />
+          <span>
+            <strong className="font-semibold">The page did not say how many this serves.</strong>{" "}
+            This is a guess — correct it, or every rescaling of this recipe will be off by the same
+            factor.
+          </span>
+        </p>
+      )}
 
-      <datalist id={CATALOG_LIST_ID}>
-        {catalog.map((entry) => (
-          <option key={entry} value={entry} />
-        ))}
-      </datalist>
-
-      <Problem message={errorFor("lines")} />
-
-      <table>
-        <thead>
-          <tr>
-            <th align="left">Ingredient</th>
-            <th align="left">Quantity</th>
-            <th align="left">Unit</th>
-            <th align="left">Density (g/mL)</th>
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => (
-            <tr key={row.key}>
-              <td>
-                <input
-                  name="ingredientName"
-                  aria-label={`Ingredient ${index + 1} name`}
-                  list={CATALOG_LIST_ID}
-                  value={row.name}
-                  onChange={(event) => update(row.key, { name: event.target.value })}
-                  required
-                />
-                {/* Import only: what the page actually said, so the user is
-                    checking the parse rather than trusting it. */}
-                {row.raw !== undefined && (
-                  <>
-                    <br />
-                    <small>
-                      From the page: <q>{row.raw}</q>
-                    </small>
-                  </>
-                )}
-                {row.needsChecking === true && (
-                  <>
-                    <br />
-                    <small role="alert" style={{ color: "#8a5000" }}>
-                      This line did not read cleanly — check the quantity and unit.
-                    </small>
-                  </>
-                )}
-              </td>
-              <td>
-                <input
-                  name="ingredientQuantity"
-                  aria-label={`Ingredient ${index + 1} quantity`}
-                  type="number"
-                  min={0}
-                  step="any"
-                  value={row.quantity}
-                  onChange={(event) => update(row.key, { quantity: event.target.value })}
-                  required
-                  style={{ width: "6rem" }}
-                />
-              </td>
-              <td>
-                <select
-                  name="ingredientUnit"
-                  aria-label={`Ingredient ${index + 1} unit`}
-                  value={row.unitId}
-                  onChange={(event) => update(row.key, { unitId: event.target.value })}
-                  required
-                >
-                  {/* A parsed line with no readable unit gets no preselected
-                      one. The empty value plus `required` is what makes the row
-                      unsubmittable until the user picks — `parseRecipeForm`
-                      rejects it too, since the browser is not the guard. */}
-                  {row.unitId === "" && <option value="">Pick a unit</option>}
-                  {UNIT_OPTIONS.map((unit) => (
-                    <option key={unit.id} value={unit.id}>
-                      {unit.label}
-                    </option>
-                  ))}
-                </select>
-              </td>
-              <td>
-                <input
-                  name="ingredientDensity"
-                  aria-label={`Ingredient ${index + 1} density in grams per millilitre`}
-                  type="number"
-                  min={0}
-                  step="any"
-                  placeholder="optional"
-                  value={row.density}
-                  onChange={(event) => update(row.key, { density: event.target.value })}
-                  style={{ width: "6rem" }}
-                />
-              </td>
-              <td>
-                <button
-                  type="button"
-                  onClick={() => removeRow(row.key)}
-                  disabled={rows.length === 1}
-                  aria-label={`Remove ingredient ${index + 1}`}
-                >
-                  Remove
-                </button>
-                <Problem message={errorFor(`line-${index}`)} />
-              </td>
-            </tr>
+      <Section
+        title="Ingredients"
+        description="A name that is not already in the catalog is added to it. Density is only used when that happens, and only matters for converting between weight and volume."
+      >
+        <datalist id={CATALOG_LIST_ID}>
+          {catalog.map((entry) => (
+            <option key={entry} value={entry} />
           ))}
-        </tbody>
-      </table>
+        </datalist>
 
-      <p>
-        <button type="button" onClick={addRow}>
-          Add another ingredient
-        </button>
-      </p>
+        <div className="flex flex-col gap-3">
+          <FormMessage message={errorFor("lines")} />
 
-      <h2>Steps</h2>
-      <p style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-        <label htmlFor="steps">One step per line</label>
-        <textarea
-          id="steps"
-          name="steps"
-          rows={8}
-          value={steps}
-          onChange={(event) => setSteps(event.target.value)}
-        />
-        <Problem message={errorFor("steps")} />
-      </p>
+          {/*
+            A list of cards rather than a <table>: every row is a form, and a
+            five-column form does not fit a phone (SPEC.md §3.6). Two columns
+            below `sm`, one line from `sm` up, where density gets as much room
+            as the name so its "g/mL, optional" placeholder is not clipped. Each control has a visible
+            label *and* keeps its numbered `aria-label`, because "Quantity"
+            read out eight times does not say which row it is in; the visible
+            word is inside the spoken name, so voice control still finds it.
+          */}
+          <ol className="flex flex-col gap-3">
+            {rows.map((row, index) => {
+              const id = `ingredient-${row.key}`;
 
-      <button type="submit" disabled={pending}>
+              return (
+                <Card as="li" key={row.key} className="flex flex-col gap-3">
+                  <div className="grid grid-cols-2 items-end gap-3 sm:grid-cols-12">
+                    <div className="col-span-2 sm:col-span-3">
+                      <Field id={`${id}-name`} label="Ingredient">
+                        <input
+                          id={`${id}-name`}
+                          name="ingredientName"
+                          aria-label={`Ingredient ${index + 1} name`}
+                          list={CATALOG_LIST_ID}
+                          value={row.name}
+                          onChange={(event) => update(row.key, { name: event.target.value })}
+                          required
+                          className={controlClass}
+                        />
+                      </Field>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <Field id={`${id}-quantity`} label="Quantity">
+                        <input
+                          id={`${id}-quantity`}
+                          name="ingredientQuantity"
+                          aria-label={`Ingredient ${index + 1} quantity`}
+                          type="number"
+                          min={0}
+                          step="any"
+                          value={row.quantity}
+                          onChange={(event) => update(row.key, { quantity: event.target.value })}
+                          required
+                          className={controlClass}
+                        />
+                      </Field>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <Field id={`${id}-unit`} label="Unit">
+                        <select
+                          id={`${id}-unit`}
+                          name="ingredientUnit"
+                          aria-label={`Ingredient ${index + 1} unit`}
+                          value={row.unitId}
+                          onChange={(event) => update(row.key, { unitId: event.target.value })}
+                          required
+                          className={controlClass}
+                        >
+                          {/* A parsed line with no readable unit gets no preselected
+                              one. The empty value plus `required` is what makes the row
+                              unsubmittable until the user picks — `parseRecipeForm`
+                              rejects it too, since the browser is not the guard. */}
+                          {row.unitId === "" && <option value="">Pick a unit</option>}
+                          {UNIT_OPTIONS.map((unit) => (
+                            <option key={unit.id} value={unit.id}>
+                              {unit.label}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                    </div>
+                    <div className="sm:col-span-3">
+                      <Field id={`${id}-density`} label="Density">
+                        <input
+                          id={`${id}-density`}
+                          name="ingredientDensity"
+                          aria-label={`Ingredient ${index + 1} density in grams per millilitre`}
+                          type="number"
+                          min={0}
+                          step="any"
+                          placeholder="g/mL, optional"
+                          value={row.density}
+                          onChange={(event) => update(row.key, { density: event.target.value })}
+                          className={controlClass}
+                        />
+                      </Field>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <Button
+                        variant="ghost"
+                        onClick={() => removeRow(row.key)}
+                        disabled={rows.length === 1}
+                        aria-label={`Remove ingredient ${index + 1}`}
+                        className="w-full"
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Import only: what the page actually said, so the user is
+                      checking the parse rather than trusting it. */}
+                  {row.raw !== undefined && (
+                    <p className="text-sm text-ink-muted wrap-anywhere">
+                      From the page: <q>{row.raw}</q>
+                    </p>
+                  )}
+                  {row.needsChecking === true && (
+                    <p role="alert" className={WARNING}>
+                      <HalfCircleIcon className="mt-1 shrink-0" />
+                      <span>This line did not read cleanly — check the quantity and unit.</span>
+                    </p>
+                  )}
+                  <FieldError id={`line-${index}`} error={errorFor(`line-${index}`)} />
+                </Card>
+              );
+            })}
+          </ol>
+
+          <Button variant="secondary" onClick={addRow} className="self-start">
+            <PlusIcon className="shrink-0" />
+            Add another ingredient
+          </Button>
+        </div>
+      </Section>
+
+      <Section title="Steps">
+        <Field id="steps" label="One step per line" error={errorFor("steps")}>
+          <textarea
+            id="steps"
+            name="steps"
+            rows={8}
+            value={steps}
+            onChange={(event) => setSteps(event.target.value)}
+            className={controlClass}
+            {...describedBy("steps", { error: errorFor("steps") })}
+          />
+        </Field>
+      </Section>
+
+      <Button type="submit" disabled={pending} className="self-start">
         {pending ? "Saving…" : "Save recipe"}
-      </button>
+      </Button>
     </form>
   );
 }

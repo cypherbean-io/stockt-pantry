@@ -1,6 +1,5 @@
-import Link from "next/link";
-
 import { AuthPage } from "@/app/_components/fields";
+import { LinkButton } from "@/app/_components/ui/button";
 import { inviteIsOpen } from "@/lib/auth/service";
 
 import { JoinForm } from "./join-form";
@@ -19,21 +18,30 @@ export default async function JoinPage({ params }: { params: Promise<{ token: st
 
   if (!(await inviteIsOpen(token))) {
     return (
-      <AuthPage title="This invite is not valid">
-        <p>
+      <AuthPage
+        title="This invite is not valid"
+        footer={
+          <p className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            Already have an account?
+            <LinkButton href="/login" variant="secondary" size="sm">
+              Sign in
+            </LinkButton>
+          </p>
+        }
+      >
+        <p className="text-ink">
           It may have been used already, or expired. Ask a member of the household for a fresh
           link.
-        </p>
-        <p>
-          <Link href="/login">Sign in</Link> if you already have an account.
         </p>
       </AuthPage>
     );
   }
 
   return (
-    <AuthPage title="Join a household">
-      <p>Pick the email address and password you will sign in with.</p>
+    <AuthPage
+      title="Join a household"
+      description="Pick the email address and password you will sign in with."
+    >
       <JoinForm token={token} />
     </AuthPage>
   );

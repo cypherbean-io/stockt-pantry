@@ -1,9 +1,8 @@
-import { PageHeader } from "@/app/_components/ui/page-header";
 import { findHousehold, listMembers } from "@/db/queries/household";
 import { listInvites } from "@/db/queries/invites";
 import { requireScope, requireSession } from "@/lib/auth/session";
 
-import { InviteButton } from "./invite-button";
+import { HouseholdScreen } from "./household-screen";
 
 /**
  * The signed-in household page.
@@ -23,56 +22,12 @@ export default async function HouseholdPage() {
   ]);
 
   return (
-    <>
-      <PageHeader
-        title={household?.name ?? "Household"}
-        description={`Signed in as ${session.email}.`}
-      />
-
-      <h2>Members</h2>
-      <ul>
-        {members.map((member) => (
-          <li key={member.id}>
-            {member.email}
-            {member.id === session.userId && " (you)"}
-          </li>
-        ))}
-      </ul>
-
-      <h2>Invites</h2>
-      <p>
-        Anyone with an open invite link can join this household and see its pantry and recipes.
-      </p>
-      <InviteButton />
-
-      {invites.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th align="left">Issued</th>
-              <th align="left">Expires</th>
-              <th align="left">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {invites.map((invite) => (
-              <tr key={invite.id}>
-                <td>{invite.createdAt.toLocaleDateString()}</td>
-                <td>{invite.expiresAt.toLocaleDateString()}</td>
-                {/* Computed by Postgres, so it cannot disagree with what
-                    redemption decides on submit. */}
-                <td>{invite.status}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-      {/*
-        The <h2>Session</h2> sign-out form that used to close this page is
-        gone. SPEC.md §1 names "Sign out exists in exactly one place" as a
-        defect, and §3.3's fix is the account disclosure in the shell — which
-        is on every screen, including this one. Two of them would just be two.
-      */}
-    </>
+    <HouseholdScreen
+      householdName={household?.name}
+      email={session.email}
+      currentUserId={session.userId}
+      members={members}
+      invites={invites}
+    />
   );
 }

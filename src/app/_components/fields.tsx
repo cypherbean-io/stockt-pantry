@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import type { FormState } from "@/app/actions/auth";
 
+import { Card } from "./ui/card";
 import { controlClass, describedBy, Field as FieldShell, FormMessage as Message } from "./ui/field";
 import { PageHeader } from "./ui/page-header";
 
@@ -13,10 +14,10 @@ import { PageHeader } from "./ui/page-header";
  *
  * Since SPEC.md §3.6 these are adapters over `ui/field.tsx` rather than markup
  * of their own. They keep their signatures — `<Field label name type>` and
- * `<FormMessage state>` — so `/login`, `/signup` and `/join/[token]` are
- * untouched, and the `#b00020` that used to be inlined here is gone: the error
- * colour is `--status-gap-ink`, which has a dark variant and a contrast
- * assertion behind it.
+ * `<FormMessage state>` — so `/login`, `/signup` and `/join/[token]` did not
+ * have to change to adopt them, and the `#b00020` that used to be inlined here
+ * is gone: the error colour is `--status-gap-ink`, which has a dark variant
+ * and a contrast assertion behind it.
  */
 
 export function Field({
@@ -63,12 +64,29 @@ export function FormMessage({ state }: { state: FormState }) {
  * No `<main>` of its own since SPEC.md §3.3: the shell renders the app's one
  * `<main>`, and a second one nested inside it is invalid markup that the "skip
  * to content" affordance ignores.
+ *
+ * The form sits on a card in the shell's narrow signed-out column; `footer` is
+ * for the way to the *other* door — sign in, set up a household — which is
+ * not part of the form and so sits under the card rather than inside it.
  */
-export function AuthPage({ title, children }: { title: string; children: ReactNode }) {
+export function AuthPage({
+  title,
+  description,
+  footer,
+  children,
+}: {
+  title: string;
+  description?: string;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <>
-      <PageHeader title={title} />
-      {children}
+      <PageHeader title={title} description={description} />
+      <Card>{children}</Card>
+      {footer !== undefined && (
+        <div className="mt-6 flex flex-col gap-3 text-sm text-ink-muted">{footer}</div>
+      )}
     </>
   );
 }

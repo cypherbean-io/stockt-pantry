@@ -1,10 +1,8 @@
-import { PageHeader } from "@/app/_components/ui/page-header";
 import { listIngredients } from "@/db/queries/ingredients";
 import { listPantryWithIngredients } from "@/db/queries/pantry";
 import { requireScope } from "@/lib/auth/session";
 
-import { AddPantryItemForm } from "./add-item-form";
-import { PantryRow } from "./pantry-row";
+import { PantryScreen } from "./pantry-screen";
 
 /**
  * The household's pantry (SPEC.md §2, "Pantry inventory").
@@ -23,39 +21,15 @@ export default async function PantryPage() {
   ]);
 
   return (
-    <>
-      {/* Recipes and Household moved to the shell's navigation (SPEC.md §3.3). */}
-      <PageHeader title="Pantry" description="What this household has on the shelf." />
-
-      <h2>Add an item</h2>
-      <AddPantryItemForm catalog={catalog.map(({ id, name }) => ({ id, name }))} />
-
-      <h2>On the shelf</h2>
-      {stocked.length === 0 ? (
-        <p>Nothing yet. Add the first thing above.</p>
-      ) : (
-        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-          {stocked.map(({ item, ingredient }) => (
-            <PantryRow
-              /*
-                Keyed on the amount as well as the id so that saving a change
-                remounts the row's inputs. An uncontrolled input keeps whatever
-                the user last typed even after its `defaultValue` changes, so
-                without this the field can go on showing a value the row behind
-                it no longer holds.
-              */
-              key={`${item.id}:${item.quantity}:${item.unitId}`}
-              item={{
-                id: item.id,
-                name: ingredient.name,
-                quantity: item.quantity,
-                unitId: item.unitId,
-                densityGPerMl: ingredient.densityGPerMl,
-              }}
-            />
-          ))}
-        </ul>
-      )}
-    </>
+    <PantryScreen
+      items={stocked.map(({ item, ingredient }) => ({
+        id: item.id,
+        name: ingredient.name,
+        quantity: item.quantity,
+        unitId: item.unitId,
+        densityGPerMl: ingredient.densityGPerMl,
+      }))}
+      catalog={catalog.map(({ id, name }) => ({ id, name }))}
+    />
   );
 }

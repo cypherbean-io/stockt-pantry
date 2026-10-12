@@ -72,9 +72,10 @@ export function FieldError({
 
   return (
     // A `<span class="block">` rather than a paragraph, because not every
-    // control in the app is inside a `Field`: the pantry's ingredient picker
-    // renders its own error inside the <p> that holds its label and select,
-    // and a <p> nested in a <p> is markup the browser closes early.
+    // error in the app belongs to one `Field`: the recipe form's per-line
+    // error belongs to a whole ingredient row, and wherever one of these ends
+    // up inside a <p>, a <p> nested in a <p> is markup the browser closes
+    // early.
     //
     // `role="alert"` because the error arrives on submit, by which point focus
     // has left the field: without a live region nothing is announced and the
