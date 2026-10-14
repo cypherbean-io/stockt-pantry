@@ -5,7 +5,20 @@ import { promisify } from "node:util";
 
 import { chromium, type Browser, type Page } from "@playwright/test";
 
-import { E2E_EMAIL, E2E_HOUSEHOLD_NAME, E2E_PASSWORD, E2E_SIGNUP_TOKEN } from "./credentials";
+import {
+  E2E_EMAIL,
+  E2E_FOREIGN_EMAIL,
+  E2E_FOREIGN_HOUSEHOLD_NAME,
+  E2E_HOUSEHOLD_NAME,
+  E2E_PASSWORD,
+  E2E_SIGNUP_TOKEN,
+} from "./credentials";
+import {
+  addRecipe,
+  FOREIGN_INGREDIENT_NAME,
+  FOREIGN_RECIPE_NAME,
+  recordForeignRecipe,
+} from "./seed";
 import {
   E2E_BASE_URL,
   E2E_DATABASE_URL,
@@ -14,8 +27,9 @@ import {
 } from "./server";
 
 /**
- * Brings up the throwaway Postgres, migrates it, and signs up one household
- * (SPEC.md §5 "Smoke").
+ * Brings up the throwaway Postgres, migrates it, and signs up the household
+ * every spec runs as (SPEC.md §5 "Smoke") — plus a second one that owns a
+ * single recipe, which is only ever looked at from the outside.
  *
  * The household is created **through the real `/signup` form**, not by
  * inserting rows. That exercises the `HOUSEHOLD_SIGNUP_TOKEN` gate rather than
@@ -115,6 +129,16 @@ async function reachHousehold(page: Page, attempt: string): Promise<void> {
   }
 }
 
+/** Fills in and submits the real `/signup` form. */
+async function submitSignup(page: Page, email: string, householdName: string): Promise<void> {
+  await page.goto("/signup");
+  await page.getByLabel("Signup token").fill(E2E_SIGNUP_TOKEN);
+  await page.getByLabel("Household name").fill(householdName);
+  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel("Password", { exact: true }).fill(E2E_PASSWORD);
+  await page.getByRole("button", { name: "Create household" }).click();
+}
+
 /** Creates the household and saves the session every spec starts from. */
 async function signUp(browser: Browser): Promise<void> {
   const context = await browser.newContext({ baseURL: E2E_BASE_URL });
@@ -122,12 +146,7 @@ async function signUp(browser: Browser): Promise<void> {
   try {
     const page = await context.newPage();
 
-    await page.goto("/signup");
-    await page.getByLabel("Signup token").fill(E2E_SIGNUP_TOKEN);
-    await page.getByLabel("Household name").fill(E2E_HOUSEHOLD_NAME);
-    await page.getByLabel("Email", { exact: true }).fill(E2E_EMAIL);
-    await page.getByLabel("Password", { exact: true }).fill(E2E_PASSWORD);
-    await page.getByRole("button", { name: "Create household" }).click();
+    await submitSignup(page, E2E_EMAIL, E2E_HOUSEHOLD_NAME);
 
     await reachHousehold(page, "Signing up the test household");
 
@@ -176,6 +195,38 @@ async function signInAgain(browser: Browser): Promise<void> {
   }
 }
 
+/**
+ * A second household with one recipe in it, for `not-found.spec.ts`
+ * (SPEC.md §5 Smoke 6): a recipe that genuinely exists, under an id the shared
+ * session must not be able to tell apart from one that never did.
+ *
+ * Here rather than in the spec because it means signing up, which means typing
+ * a password. Its session is thrown away with the context; only the recipe's id
+ * leaves this function.
+ */
+async function seedForeignRecipe(browser: Browser): Promise<void> {
+  const context = await browser.newContext({ baseURL: E2E_BASE_URL });
+
+  try {
+    const page = await context.newPage();
+
+    await submitSignup(page, E2E_FOREIGN_EMAIL, E2E_FOREIGN_HOUSEHOLD_NAME);
+    await reachHousehold(page, "Signing up the second household");
+
+    // `addRecipe` only answers once the recipe's own page has rendered it, so
+    // the id below is one its owner can open — the positive control without
+    // which "a foreign id looks like a missing one" would hold vacuously.
+    const id = await addRecipe(page, {
+      name: FOREIGN_RECIPE_NAME,
+      lines: [{ ingredient: FOREIGN_INGREDIENT_NAME, quantity: "100", unit: "g" }],
+    });
+
+    recordForeignRecipe(id);
+  } finally {
+    await context.close();
+  }
+}
+
 export default async function globalSetup(): Promise<void> {
   await startDatabase();
   await applyMigrations();
@@ -187,6 +238,7 @@ export default async function globalSetup(): Promise<void> {
   try {
     await signUp(browser);
     await signInAgain(browser);
+    await seedForeignRecipe(browser);
   } finally {
     await browser.close();
   }

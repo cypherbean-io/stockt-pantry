@@ -29,6 +29,8 @@ const SIGNUP_TOKEN_VAR = "E2E_SIGNUP_TOKEN";
 const PASSWORD_VAR = "E2E_PASSWORD";
 const EMAIL_VAR = "E2E_EMAIL";
 const HOUSEHOLD_VAR = "E2E_HOUSEHOLD_NAME";
+const FOREIGN_EMAIL_VAR = "E2E_FOREIGN_EMAIL";
+const FOREIGN_HOUSEHOLD_VAR = "E2E_FOREIGN_HOUSEHOLD_NAME";
 
 function generated(name: string, shape: (id: string) => string = (id) => id): string {
   const inherited = process.env[name];
@@ -57,3 +59,18 @@ export const E2E_PASSWORD = generated(PASSWORD_VAR);
 export const E2E_EMAIL = generated(EMAIL_VAR, (id) => `e2e-${id}@example.test`);
 
 export const E2E_HOUSEHOLD_NAME = generated(HOUSEHOLD_VAR, (id) => `E2E ${id.slice(0, 8)}`);
+
+/**
+ * A second household, which the shared session is not a member of. Its only
+ * job is to own a recipe that `not-found.spec.ts` asks for by id; it signs up
+ * with the same generated password, since nothing ever signs in as it again.
+ */
+export const E2E_FOREIGN_EMAIL = generated(
+  FOREIGN_EMAIL_VAR,
+  (id) => `e2e-foreign-${id}@example.test`,
+);
+
+export const E2E_FOREIGN_HOUSEHOLD_NAME = generated(
+  FOREIGN_HOUSEHOLD_VAR,
+  (id) => `E2E foreign ${id.slice(0, 8)}`,
+);
