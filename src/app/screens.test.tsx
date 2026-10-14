@@ -10,6 +10,7 @@ import type { Ingredient, LineStatus, PantryItem, Recipe } from "@/lib/matching/
 import { UNITS } from "@/lib/matching/units";
 import type { ImportDraft } from "@/lib/recipes/import-draft";
 
+import { ClipboardFallback } from "./_components/copy-button";
 import { HouseholdScreen } from "./household/household-screen";
 import { IssuedInvite } from "./household/invite-button";
 import { JoinForm } from "./join/[token]/join-form";
@@ -208,6 +209,15 @@ const SCREENS: ReadonlyArray<readonly [string, ReactElement]> = [
       key="issued"
       link="http://192.168.1.20:3000/join/3q2-uVb0x8Y4mZ1cK7wT9sLhA5eR6dGj"
       expiresAt="2026-10-08T09:00:00.000Z"
+    />,
+  ],
+  // Only reachable through a click in a non-secure context (SPEC.md §3.8), so
+  // rendered on its own, as the issued invite is.
+  [
+    "/recipes/[id], copy fallback",
+    <ClipboardFallback
+      key="copy-fallback"
+      text={"Chana masala — shopping list (4 servings)\n- Coriander: 1 count\n- Tomatoes: 300 g"}
     />,
   ],
 ];
@@ -516,5 +526,15 @@ describe("/recipes/[id]", () => {
     // the screen leaves the app, and none carries the source's host at all.
     expect(hrefs.filter((href) => !href.startsWith("/") || href.startsWith("//"))).toEqual([]);
     expect(hrefs.filter((href) => href.includes(new URL(SOURCE_URL).hostname))).toEqual([]);
+  });
+
+  it("offers to copy a shopping list with something on it", () => {
+    // SPEC.md §3.8. Tomatoes are short and coriander is missing in RESULT.
+    expect(markupOf("/recipes/[id]")).toMatch(/<button[^>]*>Copy<\/button>/);
+  });
+
+  it("offers no Copy when there is nothing to buy", () => {
+    expect(markupOf("/recipes/[id], nothing listed")).toContain("Nothing to buy.");
+    expect(markupOf("/recipes/[id], nothing listed")).not.toMatch(/>Copy</);
   });
 });
