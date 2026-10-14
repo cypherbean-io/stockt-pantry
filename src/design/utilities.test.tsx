@@ -16,6 +16,7 @@ import NotFound from "@/app/not-found";
 import PantryLoading from "@/app/pantry/loading";
 import RecipeLoading from "@/app/recipes/[id]/loading";
 import RecipesLoading from "@/app/recipes/loading";
+import { BUCKET_ORDER } from "@/lib/matching/summary";
 import type { LineStatus } from "@/lib/matching/types";
 
 import { classCandidates, compileCandidates, selectorPattern } from "./utilities";
@@ -58,6 +59,9 @@ const GALLERY = (
     ))}
     {STATUSES.map((status) => (
       <StatusBadge key={status} status={status} />
+    ))}
+    {BUCKET_ORDER.map((bucket) => (
+      <StatusBadge key={bucket} status={bucket} />
     ))}
 
     <PageHeader

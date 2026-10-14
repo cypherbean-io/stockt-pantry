@@ -3,6 +3,7 @@ import { isValidElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { BUCKET_LABEL, BUCKET_ORDER, type RecipeBucket } from "@/lib/matching/summary";
 import type { LineStatus } from "@/lib/matching/types";
 
 import { Badge, STATUS_TONES, StatusBadge, statusLabel } from "./badge";
@@ -15,6 +16,11 @@ import { Badge, STATUS_TONES, StatusBadge, statusLabel } from "./badge";
  */
 
 const STATUSES: readonly LineStatus[] = ["have", "short", "missing", "unresolved"];
+
+const BUCKETS: readonly RecipeBucket[] = BUCKET_ORDER;
+
+/** Both vocabularies the badge paints: a line's status, and a recipe's bucket. */
+const EVERY_STATUS: readonly (LineStatus | RecipeBucket)[] = [...STATUSES, ...BUCKETS];
 
 function classOf(markup: string): string {
   return /class="([^"]*)"/.exec(markup)?.[1] ?? "";
@@ -58,8 +64,12 @@ function textContent(node: ReactNode): string {
   return "";
 }
 
+function glyphOf(status: LineStatus | RecipeBucket): string | undefined {
+  return /<svg[\s\S]*?<\/svg>/.exec(renderToStaticMarkup(<StatusBadge status={status} />))?.[0];
+}
+
 describe("a status badge", () => {
-  it.each(STATUSES)("paints %s in the ink that was measured against its own fill", (status) => {
+  it.each(EVERY_STATUS)("paints %s in the ink that was measured against its own fill", (status) => {
     // `bg-status-ok text-status-gap-ink` is a plausible copy-paste and it is
     // unreadable: tokens.test.ts checks each `--status-*-ink` against *its*
     // `--status-*`, so a crossed pair ships a combination nothing measured.
@@ -70,18 +80,14 @@ describe("a status badge", () => {
     expect(classes).toContain(`text-${fill}-ink`);
   });
 
-  it.each(STATUSES)("says what %s means in words, not only in colour", (status) => {
+  it.each(EVERY_STATUS)("says what %s means in words, not only in colour", (status) => {
     // SPEC.md §3.5. Someone who cannot distinguish the fills — or is reading a
     // greyscale screenshot — still gets the whole answer.
     expect(textContent(<StatusBadge status={status} />)).toBe(statusLabel(status));
   });
 
   it("gives each status a glyph of its own", () => {
-    const glyphs = STATUSES.map(
-      (status) => /<svg[\s\S]*?<\/svg>/.exec(renderToStaticMarkup(<StatusBadge status={status} />))?.[0],
-    );
-
-    expect(new Set(glyphs).size).toBe(STATUSES.length);
+    expect(new Set(STATUSES.map(glyphOf)).size).toBe(STATUSES.length);
   });
 
   it("announces the label once, not once per glyph", () => {
@@ -91,12 +97,44 @@ describe("a status badge", () => {
   });
 });
 
+describe("a bucket badge", () => {
+  it.each(BUCKETS)("names %s with the heading /recipes groups it under", (bucket) => {
+    // One copy of the words: the heading on the page is the classifier's own
+    // label, not a second string here that drifts from it.
+    expect(textContent(<StatusBadge status={bucket} />)).toBe(BUCKET_LABEL[bucket]);
+  });
+
+  it("gives each bucket a glyph of its own", () => {
+    // Needs shopping and Partly unverifiable are 25 degrees apart in hue on
+    // purpose (SPEC.md §3.5); the glyph is what tells them apart.
+    expect(BUCKETS.every((bucket) => glyphOf(bucket) !== undefined)).toBe(true);
+    expect(new Set(BUCKETS.map(glyphOf)).size).toBe(BUCKETS.length);
+  });
+
+  it.each<[RecipeBucket, string]>([
+    ["ready", "ok"],
+    ["shopping", "warn"],
+    ["partly-unverifiable", "mixed"],
+    ["unverifiable", "unknown"],
+  ])("paints %s in --status-%s, as SPEC.md §3.5 assigns it", (bucket, tone) => {
+    expect(classOf(renderToStaticMarkup(<StatusBadge status={bucket} />))).toContain(
+      `bg-status-${tone}`,
+    );
+  });
+
+  it("shares the glyph of the line status it stands for", () => {
+    // Ready to cook is every line "have"; Can't verify is lines "unresolved".
+    expect(glyphOf("ready")).toBe(glyphOf("have"));
+    expect(glyphOf("unverifiable")).toBe(glyphOf("unresolved"));
+  });
+});
+
 describe("the tone vocabulary", () => {
   it("covers every status token the stylesheet declares", () => {
     // `--status-mixed` has no `LineStatus` — it belongs to the
-    // "partly unverifiable" bucket of SPEC.md §3.5, which arrives with
-    // `summary.ts`. It is declared, contrast-checked and therefore has to be
-    // reachable, or it is a token nothing can ever paint.
+    // "partly unverifiable" bucket of SPEC.md §3.5. It is declared,
+    // contrast-checked and therefore has to be reachable, or it is a token
+    // nothing can ever paint.
     expect([...STATUS_TONES]).toEqual(["ok", "warn", "mixed", "gap", "unknown"]);
   });
 

@@ -22,16 +22,14 @@ export default async function RecipesPage() {
   ]);
 
   const pantry = toPantry(pantryRows);
-  const entries = recipes
-    .map((row) => ({
-      id: row.id,
-      name: row.name,
-      baseServings: row.baseServings,
-      result: matchRecipe(toRecipe(row, row.lines), pantry),
-    }))
-    // `listRecipesWithLines` already orders by name; Array.prototype.sort is
-    // stable, so this only lifts the makeable ones without disturbing that.
-    .sort((a, b) => Number(b.result.makeable) - Number(a.result.makeable));
+  // In the name order `listRecipesWithLines` reads them. The screen groups
+  // them by bucket from these same results — no second query (SPEC.md §2.6).
+  const entries = recipes.map((row) => ({
+    id: row.id,
+    name: row.name,
+    baseServings: row.baseServings,
+    result: matchRecipe(toRecipe(row, row.lines), pantry),
+  }));
 
   return <RecipeListScreen entries={entries} pantryIsEmpty={pantryRows.length === 0} />;
 }

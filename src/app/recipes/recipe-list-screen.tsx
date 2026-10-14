@@ -5,8 +5,9 @@ import { PlusIcon } from "@/app/_components/icons";
 import { LinkButton } from "@/app/_components/ui/button";
 import { DataTable } from "@/app/_components/ui/data-table";
 import { EmptyState } from "@/app/_components/ui/empty-state";
+import { StatusBadge } from "@/app/_components/ui/badge";
 import { PageHeader } from "@/app/_components/ui/page-header";
-import { summarise } from "@/lib/matching/summary";
+import { BUCKET_LABEL, groupByBucket, summarise } from "@/lib/matching/summary";
 import type { MatchResult } from "@/lib/matching/types";
 
 /**
@@ -38,7 +39,7 @@ export function RecipeListScreen({
   entries,
   pantryIsEmpty,
 }: {
-  /** In display order: `page.tsx` lifts the makeable ones to the top. */
+  /** In name order, as `page.tsx` reads them; this groups them under their buckets. */
   readonly entries: readonly RecipeListEntry[];
   readonly pantryIsEmpty: boolean;
 }): ReactElement {
@@ -94,23 +95,49 @@ export function RecipeListScreen({
           No recipes yet.
         </EmptyState>
       ) : (
-        <DataTable
-          label="Recipes"
-          rows={entries}
-          rowKey={({ id }) => id}
-          rowHeader={{
-            header: "Recipe",
-            cell: ({ id, name }) => (
-              <Link href={`/recipes/${id}`} className={RECIPE_LINK}>
-                {name}
-              </Link>
-            ),
-          }}
-          columns={[
-            { header: "Serves", cell: ({ baseServings }) => baseServings },
-            { header: "Status", cell: ({ result }) => summarise(result) },
-          ]}
-        />
+        // SPEC.md §2 item 6: one group per bucket, most actionable first, and
+        // none for a bucket nothing falls into. Each heading is the bucket's
+        // badge — token, glyph and words (§3.5) — and how many are under it.
+        // The id names the section after its heading, so a screen reader can
+        // move between groups as regions; there is one heading per bucket, so
+        // it is on the page once even though the rows below render twice. The
+        // `{" "}` keeps that name "Ready to cook 2 recipes" rather than
+        // "…cook2 recipes": flex layout ignores it, the accessible name does not.
+        <div className="flex flex-col gap-8">
+          {groupByBucket(entries).map(({ bucket, entries: members }) => (
+            <section key={bucket} aria-labelledby={`bucket-${bucket}`}>
+              <h2
+                id={`bucket-${bucket}`}
+                className="mb-3 flex flex-wrap items-center gap-2 text-lg/6 font-semibold text-ink"
+              >
+                <StatusBadge status={bucket} />{" "}
+                <span className="text-sm font-normal text-ink-muted">
+                  {`${members.length} ${members.length === 1 ? "recipe" : "recipes"}`}
+                </span>
+              </h2>
+              <DataTable
+                label={BUCKET_LABEL[bucket]}
+                rows={members}
+                rowKey={({ id }) => id}
+                rowHeader={{
+                  header: "Recipe",
+                  cell: ({ id, name }) => (
+                    <Link href={`/recipes/${id}`} className={RECIPE_LINK}>
+                      {name}
+                    </Link>
+                  ),
+                }}
+                columns={[
+                  { header: "Serves", cell: ({ baseServings }) => baseServings },
+                  // Still the counts, not the bucket again: a Partly
+                  // unverifiable row says "2 to buy · 1 can't verify", which
+                  // is what makes it something to act on.
+                  { header: "Status", cell: ({ result }) => summarise(result) },
+                ]}
+              />
+            </section>
+          ))}
+        </div>
       )}
     </>
   );
