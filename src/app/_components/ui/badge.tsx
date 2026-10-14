@@ -1,8 +1,9 @@
 import type { ComponentType, ReactElement, ReactNode } from "react";
 
+import { BUCKET_LABEL, type RecipeBucket } from "@/lib/matching/summary";
 import type { LineStatus } from "@/lib/matching/types";
 
-import { CheckIcon, DiamondIcon, HalfCircleIcon, MinusCircleIcon } from "../icons";
+import { CheckIcon, DiamondIcon, HalfCircleIcon, HalfDiamondIcon, MinusCircleIcon } from "../icons";
 import { cx } from "./class-names";
 
 /**
@@ -17,11 +18,10 @@ import { cx } from "./class-names";
  * the whole answer.
  *
  * `Badge` is the visual primitive and `StatusBadge` is the one the app calls.
- * They are separate because the four *buckets* of SPEC.md §3.5 need the same
- * chip over a different vocabulary, including `--status-mixed`, which no
- * `LineStatus` maps to. That bucket badge arrives with `src/lib/matching/
- * summary.ts`; until then `STATUS_TONES` is what keeps the token reachable and
- * covered.
+ * `StatusBadge` paints two vocabularies: a line's `LineStatus`, and the
+ * `RecipeBucket` `/recipes` groups a whole recipe under (SPEC.md §3.5, §3.6).
+ * They share no strings, so one prop takes either. Only a bucket reaches
+ * `--status-mixed` — Partly unverifiable — which no single line can be.
  */
 
 export const STATUS_TONES = ["ok", "warn", "mixed", "gap", "unknown"] as const;
@@ -63,48 +63,54 @@ export function Badge({
   );
 }
 
+type Glyph = ComponentType<{ readonly className?: string }>;
+
 /**
- * The words, which moved here from `_components/match.tsx` because this is
- * what paints them and a second copy of a user-visible string is a copy that
- * drifts.
+ * Everything a status is drawn with, in one total `Record`: a fifth line
+ * status or bucket fails `tsc` here until it has a tone, a glyph and words.
+ *
+ * The line words moved here from `_components/match.tsx` because this is what
+ * paints them, and a second copy of a user-visible string is a copy that
+ * drifts. The bucket words are `BUCKET_LABEL`'s for the same reason — they
+ * are the headings `/recipes` groups under. Glyphs and tones follow SPEC.md
+ * §3.5's table: a bucket that stands for a single line status borrows its
+ * glyph, and the two that roll several together get shapes of their own.
  */
-const STATUS_LABEL: Record<LineStatus, string> = {
-  have: "have enough",
-  short: "short",
-  missing: "missing",
-  unresolved: "can't verify without a density",
+const STATUS: Record<
+  LineStatus | RecipeBucket,
+  { readonly tone: StatusTone; readonly Glyph: Glyph; readonly label: string }
+> = {
+  have: { tone: "ok", Glyph: CheckIcon, label: "have enough" },
+  short: { tone: "warn", Glyph: HalfCircleIcon, label: "short" },
+  missing: { tone: "gap", Glyph: MinusCircleIcon, label: "missing" },
+  unresolved: { tone: "unknown", Glyph: DiamondIcon, label: "can't verify without a density" },
+
+  ready: { tone: "ok", Glyph: CheckIcon, label: BUCKET_LABEL.ready },
+  shopping: { tone: "warn", Glyph: HalfCircleIcon, label: BUCKET_LABEL.shopping },
+  "partly-unverifiable": {
+    tone: "mixed",
+    Glyph: HalfDiamondIcon,
+    label: BUCKET_LABEL["partly-unverifiable"],
+  },
+  unverifiable: { tone: "unknown", Glyph: DiamondIcon, label: BUCKET_LABEL.unverifiable },
 };
 
-export function statusLabel(status: LineStatus): string {
-  return STATUS_LABEL[status];
+export function statusLabel(status: LineStatus | RecipeBucket): string {
+  return STATUS[status].label;
 }
-
-const STATUS_TONE: Record<LineStatus, StatusTone> = {
-  have: "ok",
-  short: "warn",
-  missing: "gap",
-  unresolved: "unknown",
-};
-
-const STATUS_ICON: Record<LineStatus, ComponentType<{ readonly className?: string }>> = {
-  have: CheckIcon,
-  short: HalfCircleIcon,
-  missing: MinusCircleIcon,
-  unresolved: DiamondIcon,
-};
 
 export function StatusBadge({
   status,
   className,
 }: {
-  readonly status: LineStatus;
+  readonly status: LineStatus | RecipeBucket;
   readonly className?: string;
 }): ReactElement {
-  const Glyph = STATUS_ICON[status];
+  const { tone, Glyph, label } = STATUS[status];
 
   return (
-    <Badge tone={STATUS_TONE[status]} icon={<Glyph className="shrink-0" />} className={className}>
-      {statusLabel(status)}
+    <Badge tone={tone} icon={<Glyph className="shrink-0" />} className={className}>
+      {label}
     </Badge>
   );
 }

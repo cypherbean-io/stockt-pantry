@@ -89,3 +89,31 @@ export function summarise(result: MatchResult): string {
   // readings come from the lines.
   return parts.length === 0 ? BUCKET_LABEL.ready : parts.join(" · ");
 }
+
+export type BucketGroup<T> = { readonly bucket: RecipeBucket; readonly entries: readonly T[] };
+
+/**
+ * The `/recipes` list, sorted under its headings: buckets in `BUCKET_ORDER`,
+ * and entries within one in the order they arrived — name order, as the page
+ * reads them. A bucket nothing falls into is left out rather than answered
+ * empty, because SPEC.md §3.5 draws no heading for it.
+ */
+export function groupByBucket<T extends { readonly result: MatchResult }>(
+  entries: readonly T[],
+): readonly BucketGroup<T>[] {
+  // A total `Record`, like `BUCKET_LABEL`: a fifth bucket fails `tsc` here
+  // rather than having its recipes dropped from the page without a word.
+  const byBucket: Record<RecipeBucket, T[]> = {
+    ready: [],
+    shopping: [],
+    "partly-unverifiable": [],
+    unverifiable: [],
+  };
+  for (const entry of entries) {
+    byBucket[recipeBucket(entry.result)].push(entry);
+  }
+
+  return BUCKET_ORDER.flatMap((bucket) =>
+    byBucket[bucket].length === 0 ? [] : [{ bucket, entries: byBucket[bucket] }],
+  );
+}

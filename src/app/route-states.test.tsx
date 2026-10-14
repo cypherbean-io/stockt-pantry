@@ -5,6 +5,8 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import type { MatchResult } from "@/lib/matching/types";
+
 import { PageHeader } from "./_components/ui/page-header";
 import ErrorScreen from "./error";
 import HouseholdLoading from "./household/loading";
@@ -12,6 +14,7 @@ import NotFound from "./not-found";
 import PantryLoading from "./pantry/loading";
 import RecipeLoading from "./recipes/[id]/loading";
 import RecipesLoading from "./recipes/loading";
+import { RecipeListScreen } from "./recipes/recipe-list-screen";
 
 /**
  * The route-level states of SPEC.md §3.7: what the app shows while a page is
@@ -266,5 +269,39 @@ describe("the loading skeletons", () => {
     const classes = hosts(<Loading />).map(classesOf);
 
     expect(classes.some((tokens) => tokens.includes("mb-6"))).toBe(true);
+  });
+});
+
+describe("the /recipes skeleton", () => {
+  // `RecipeListScreen` renders `next/link`, which uses context, so — like
+  // `not-found.tsx` above — it is read from rendered markup rather than walked.
+  const READY: MatchResult = { recipeName: "Toast", servings: 2, makeable: true, lines: [] };
+  const screen = renderToStaticMarkup(
+    <RecipeListScreen
+      entries={[{ id: "6b1e4a55-0c7f-4d16-8a2b-3e4f5a6b7c8d", name: "Toast", baseServings: 2, result: READY }]}
+      pantryIsEmpty={false}
+    />,
+  );
+  const headingClasses = /<h2\b[^>]*\sclass="([^"]*)"/.exec(screen)?.[1]?.split(/\s+/) ?? [];
+  const badgeClasses =
+    /<h2\b[^>]*>\s*<span\b[^>]*\sclass="([^"]*)"/.exec(screen)?.[1]?.split(/\s+/) ?? [];
+
+  it("is reading a real bucket heading, built from the badge", () => {
+    // The drift guard for the assertion below. The heading is the bucket's
+    // badge, and its height is the badge's: a 1.25rem `text-sm` line plus
+    // `py-1` is 1.75rem, an `h-7`.
+    expect(headingClasses).toContain("mb-3");
+    expect(badgeClasses).toEqual(expect.arrayContaining(["text-sm", "py-1"]));
+  });
+
+  it("reserves each bucket heading at its real height and spacing, so the rows do not jump", () => {
+    const bars = hosts(<RecipesLoading />).map(classesOf);
+
+    expect(bars.some((tokens) => tokens.includes("h-7") && tokens.includes("mb-3"))).toBe(true);
+  });
+
+  it("spaces its groups as the screen does", () => {
+    expect(screen).toMatch(/<div class="flex flex-col gap-8"><section\b/);
+    expect(hosts(<RecipesLoading />).map(classesOf)).toContainEqual(["flex", "flex-col", "gap-8"]);
   });
 });

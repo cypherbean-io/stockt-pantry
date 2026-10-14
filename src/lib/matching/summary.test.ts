@@ -7,8 +7,10 @@ import {
   BUCKET_LABEL,
   BUCKET_ORDER,
   countByStatus,
+  groupByBucket,
   recipeBucket,
   summarise,
+  type BucketGroup,
   type RecipeBucket,
 } from "./summary";
 import type { LineStatus, MatchResult, MatchedLine } from "./types";
@@ -225,5 +227,84 @@ describe("against every sub-recipe of the engine's fixture", () => {
 
   it("reaches all four buckets, so neither side of the invariant is vacuous", () => {
     expect(new Set(results.map((result) => recipeBucket(result)))).toEqual(new Set(BUCKET_ORDER));
+  });
+});
+
+describe("groupByBucket", () => {
+  /** A list row as `/recipes` holds one: something to name it by, and its match. */
+  function entry(name: string, ...statuses: readonly LineStatus[]) {
+    return { name, result: resultOf(...statuses) };
+  }
+
+  function names(groups: readonly BucketGroup<{ readonly name: string }>[]) {
+    return groups.map(({ bucket, entries }) => [bucket, entries.map(({ name }) => name)]);
+  }
+
+  it("groups in display order, whatever order the entries arrive in", () => {
+    const groups = groupByBucket([
+      entry("Focaccia", "short", "unresolved"),
+      entry("Pancakes", "unresolved"),
+      entry("Risotto", "missing"),
+      entry("Toast", "have"),
+    ]);
+
+    expect(names(groups)).toEqual([
+      ["ready", ["Toast"]],
+      ["shopping", ["Risotto"]],
+      ["partly-unverifiable", ["Focaccia"]],
+      ["unverifiable", ["Pancakes"]],
+    ]);
+  });
+
+  it("leaves out a bucket nothing falls into, so it draws no heading", () => {
+    // SPEC.md §3.5: "Empty buckets render no heading."
+    const groups = groupByBucket([entry("Toast", "have"), entry("Pancakes", "unresolved")]);
+
+    expect(groups.map(({ bucket }) => bucket)).toEqual(["ready", "unverifiable"]);
+  });
+
+  it("answers no groups at all for no recipes", () => {
+    expect(groupByBucket([])).toEqual([]);
+  });
+
+  it("keeps the order entries arrived in within a bucket", () => {
+    // The page hands them over in name order; grouping must not shuffle that.
+    const groups = groupByBucket([
+      entry("Apple pie", "missing"),
+      entry("Toast", "have"),
+      entry("Bread", "short"),
+      entry("Crumble", "missing", "short"),
+    ]);
+
+    expect(names(groups)).toEqual([
+      ["ready", ["Toast"]],
+      ["shopping", ["Apple pie", "Bread", "Crumble"]],
+    ]);
+  });
+
+  it("hands back the entries themselves, not copies", () => {
+    const toast = entry("Toast", "have");
+
+    expect(groupByBucket([toast])[0]?.entries[0]).toBe(toast);
+  });
+
+  it("files every engine-produced result exactly once, under its own bucket", () => {
+    const entries = fixtureResults().map((result, index) => ({ name: `r${index}`, result }));
+    const groups = groupByBucket(entries);
+
+    expect(groups.flatMap((group) => group.entries)).toHaveLength(entries.length);
+    expect(new Set(groups.flatMap((group) => group.entries)).size).toBe(entries.length);
+    for (const { bucket, entries: members } of groups) {
+      expect(members.length, bucket).toBeGreaterThan(0);
+      for (const member of members) {
+        expect(recipeBucket(member.result), describeResult(member.result)).toBe(bucket);
+      }
+    }
+  });
+
+  it("refuses a line status it cannot classify rather than dropping the recipe", () => {
+    expect(() => groupByBucket([entry("Stray", "expired" as string as LineStatus)])).toThrow(
+      /status/,
+    );
   });
 });

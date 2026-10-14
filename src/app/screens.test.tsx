@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { InviteListing } from "@/db/queries/invites";
 import { classCandidates, compileCandidates, selectorPattern } from "@/design/utilities";
 import { matchRecipe } from "@/lib/matching/match";
+import { BUCKET_ORDER, recipeBucket, type RecipeBucket } from "@/lib/matching/summary";
 import type { Ingredient, LineStatus, PantryItem, Recipe } from "@/lib/matching/types";
 import { UNITS } from "@/lib/matching/units";
 import type { ImportDraft } from "@/lib/recipes/import-draft";
@@ -68,6 +69,20 @@ const HUMMUS: Recipe = {
   ingredients: [{ ingredient: CHICKPEAS, quantity: { value: 200, unit: UNITS.g } }],
 };
 
+/** Tomatoes short and nothing else: Needs shopping. */
+const TOMATO_SOUP: Recipe = {
+  name: "Tomato soup",
+  baseServings: 2,
+  ingredients: [{ ingredient: TOMATOES, quantity: { value: 400, unit: UNITS.g } }],
+};
+
+/** Grams of rice against millilitres held, with no density: Can't verify. */
+const RICE_PUDDING: Recipe = {
+  name: "Rice pudding",
+  baseServings: 4,
+  ingredients: [{ ingredient: RICE, quantity: { value: 200, unit: UNITS.g } }],
+};
+
 /** One of every line status at once. */
 const RESULT = matchRecipe(CHANA_MASALA, PANTRY);
 const NOTHING_LISTED = matchRecipe({ ...CHANA_MASALA, ingredients: [] }, PANTRY);
@@ -82,9 +97,22 @@ const RECIPE = {
   steps: ["Fry the onion until soft.", "Add the spices, then the tomatoes.", "Stir in the chickpeas."],
 };
 
+const HUMMUS_ENTRY = {
+  id: "1d4a7c00-5e2b-4f61-8c3d-9b0e7a6f2d18",
+  name: HUMMUS.name,
+  baseServings: 2,
+  result: matchRecipe(HUMMUS, PANTRY),
+};
+
+/**
+ * In name order, as `listRecipesWithLines` hands them to the page — which is
+ * nowhere near bucket order, so the grouping has something to do.
+ */
 const ENTRIES = [
-  { id: "1d4a7c00-5e2b-4f61-8c3d-9b0e7a6f2d18", name: HUMMUS.name, baseServings: 2, result: matchRecipe(HUMMUS, PANTRY) },
   { id: RECIPE.id, name: RECIPE.name, baseServings: 4, result: RESULT },
+  HUMMUS_ENTRY,
+  { id: "2e5b8d11-6f3c-4a72-9d4e-0c1f8b7a3e29", name: RICE_PUDDING.name, baseServings: 4, result: matchRecipe(RICE_PUDDING, PANTRY) },
+  { id: "3f6c9e22-7a4d-4b83-8e5f-1d2a9c8b4f3a", name: TOMATO_SOUP.name, baseServings: 2, result: matchRecipe(TOMATO_SOUP, PANTRY) },
 ];
 
 const CATALOG = ["Basmati rice", "Chickpeas", "Coriander", "Tomatoes"];
@@ -135,6 +163,7 @@ const SCREENS: ReadonlyArray<readonly [string, ReactElement]> = [
   ["/recipes", <RecipeListScreen key="recipes" entries={ENTRIES} pantryIsEmpty={false} />],
   ["/recipes, empty pantry", <RecipeListScreen key="empty-pantry" entries={ENTRIES} pantryIsEmpty />],
   ["/recipes, no recipes", <RecipeListScreen key="no-recipes" entries={[]} pantryIsEmpty />],
+  ["/recipes, all ready", <RecipeListScreen key="all-ready" entries={[HUMMUS_ENTRY]} pantryIsEmpty={false} />],
   ["/recipes/new form", <RecipeForm key="new" catalog={CATALOG} />],
   ["/recipes/import form", <ImportFlow key="import" catalog={CATALOG} />],
   ["/recipes/import review", <RecipeForm key="review" catalog={CATALOG} initial={DRAFT} />],
@@ -239,7 +268,19 @@ describe("the fixtures", () => {
   });
 
   it("include a recipe that is makeable and one that is not", () => {
-    expect(ENTRIES.map(({ result }) => result.makeable).sort()).toEqual([false, true]);
+    expect(new Set(ENTRIES.map(({ result }) => result.makeable))).toEqual(new Set([false, true]));
+  });
+
+  it("put a recipe in every bucket, so every heading is drawn", () => {
+    expect(new Set(ENTRIES.map(({ result }) => recipeBucket(result)))).toEqual(
+      new Set(BUCKET_ORDER),
+    );
+  });
+
+  it("arrive out of bucket order, so the grouping is what orders them", () => {
+    const buckets = ENTRIES.map(({ result }) => BUCKET_ORDER.indexOf(recipeBucket(result)));
+
+    expect(buckets).not.toEqual([...buckets].sort((a, b) => a - b));
   });
 
   it("render something to look at on every screen", () => {
@@ -345,10 +386,104 @@ describe.each(NAMES)("%s", (name) => {
 });
 
 describe("/recipes", () => {
+  const markup = markupOf("/recipes");
+
+  /** Where a bucket's heading opens, or -1 if it has none. */
+  function headingAt(source: string, bucket: RecipeBucket): number {
+    return source.search(new RegExp(`<h2\\b[^>]*\\sid="bucket-${bucket}"`));
+  }
+
+  /** A bucket's heading, from its opening tag to its close. */
+  function heading(bucket: RecipeBucket): string {
+    const start = headingAt(markup, bucket);
+    return start === -1 ? "" : markup.slice(start, markup.indexOf("</h2>", start));
+  }
+
+  const TONE: Record<RecipeBucket, string> = {
+    ready: "ok",
+    shopping: "warn",
+    "partly-unverifiable": "mixed",
+    unverifiable: "unknown",
+  };
+
   it("links every recipe to its own page", () => {
     for (const { id } of ENTRIES) {
-      expect(markupOf("/recipes")).toContain(`href="/recipes/${id}"`);
+      expect(markup).toContain(`href="/recipes/${id}"`);
     }
+  });
+
+  it("draws the four headings most actionable first", () => {
+    // SPEC.md §3.5: ready → shopping → partly-unverifiable → unverifiable.
+    const positions = BUCKET_ORDER.map((bucket) => headingAt(markup, bucket));
+
+    expect(positions.every((position) => position !== -1), String(positions)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it.each(ENTRIES.map((entry) => [entry.name, entry] as const))(
+    "files %s under its own heading and no other",
+    (_name, { id, result }) => {
+      // The recipe is drawn twice — table and cards — and both copies have to
+      // sit between its bucket's heading and the next one.
+      const bucket = recipeBucket(result);
+      const start = headingAt(markup, bucket);
+      const next = BUCKET_ORDER.slice(BUCKET_ORDER.indexOf(bucket) + 1)
+        .map((later) => headingAt(markup, later))
+        .find((position) => position !== -1);
+      const links = [...markup.matchAll(new RegExp(`href="/recipes/${id}"`, "g"))].map(
+        (match) => match.index,
+      );
+
+      expect(start, `no heading for ${bucket}`).not.toBe(-1);
+      expect(links).toHaveLength(2);
+      for (const link of links) {
+        expect(link).toBeGreaterThan(start);
+        if (next !== undefined) expect(link).toBeLessThan(next);
+      }
+    },
+  );
+
+  it.each(BUCKET_ORDER)("says how many recipes are in %s, in words", (bucket) => {
+    // One recipe per bucket in the fixtures. The space is what keeps the
+    // heading's accessible name from running the label into the count.
+    expect(heading(bucket)).toMatch(/<\/span> <span[^>]*>1 recipe</);
+  });
+
+  it("counts more than one in the plural", () => {
+    const twoReady = renderToStaticMarkup(
+      <RecipeListScreen
+        entries={[HUMMUS_ENTRY, { ...HUMMUS_ENTRY, id: "4a7d0f33-8b5e-4c94-9f60-2e3b0d9c5a4b" }]}
+        pantryIsEmpty={false}
+      />,
+    );
+
+    expect(twoReady).toContain(">2 recipes<");
+  });
+
+  it.each(BUCKET_ORDER)("draws the %s heading as a badge with its glyph", (bucket) => {
+    // SPEC.md §3.5's table: every bucket heading is a token, a glyph and a
+    // label. The label is `badge.test.tsx`'s to check; this checks that the
+    // heading is that badge rather than a bare word.
+    expect(heading(bucket)).toMatch(
+      new RegExp(`class="[^"]*\\bbg-status-${TONE[bucket]}\\b[^"]*"><svg\\b`),
+    );
+  });
+
+  it("names each group by its heading, so a screen reader can jump between them", () => {
+    for (const bucket of BUCKET_ORDER) {
+      expect(markup).toMatch(new RegExp(`<section\\b[^>]*aria-labelledby="bucket-${bucket}"`));
+    }
+  });
+
+  it("draws no heading for a bucket nothing falls into", () => {
+    // SPEC.md §3.5: "Empty buckets render no heading."
+    const allReady = markupOf("/recipes, all ready");
+
+    expect(BUCKET_ORDER.filter((bucket) => headingAt(allReady, bucket) !== -1)).toEqual(["ready"]);
+  });
+
+  it("puts nothing in a bucket heading when there are no recipes at all", () => {
+    expect(markupOf("/recipes, no recipes")).not.toContain('id="bucket-');
   });
 });
 
