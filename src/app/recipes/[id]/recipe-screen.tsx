@@ -104,7 +104,7 @@ export function RecipeScreen({
           title="Shopping list"
           description={`What is missing or short at ${servings} servings. Buying it does not update the pantry — re-enter what you bought yourself.`}
         >
-          <ShoppingList lines={toBuy} />
+          <ShoppingList recipeName={recipe.name} servings={servings} lines={toBuy} />
         </Section>
 
         <Section title="Steps">
