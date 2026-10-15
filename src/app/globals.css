@@ -242,4 +242,37 @@
    * rest of the numeric scale still work.
    */
   --spacing-tap: 2.75rem;
+
+  /*
+   * Motion (SPEC.md §2 item 12). One entrance, used where something appears
+   * that the user did not directly put there: an inline form message after a
+   * submit, a disclosure panel after a click. 160ms is inside the 120–180ms
+   * the spec names; the 0.25rem drop says "this came from above" without
+   * travelling far enough to read as movement. Only ever applied as
+   * `motion-safe:animate-fade-in` — `src/design/motion.test.tsx` fails on a
+   * bare `animate-*` anywhere in the app.
+   */
+  --animate-fade-in: fade-in 160ms ease-out;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+      translate: 0 -0.25rem;
+    }
+  }
+}
+
+/*
+ * What a disclosure panel transitions as it expands and collapses. `display`
+ * is in the list so that, with `transition-discrete`, the panel stays laid out
+ * until it has faded rather than vanishing on the first frame. A named utility
+ * rather than `transition-[opacity,translate,display]`, because arbitrary
+ * values are where `utilities.test.tsx` looks for hardcoded colours, and the
+ * name says what it is for. Timing follows Tailwind's own `transition-*`
+ * defaults (150ms), so `duration-*` / `ease-*` still apply.
+ */
+@utility transition-disclosure {
+  transition-property: opacity, translate, display;
+  transition-timing-function: var(--tw-ease, var(--default-transition-timing-function));
+  transition-duration: var(--tw-duration, var(--default-transition-duration));
 }

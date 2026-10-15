@@ -38,8 +38,15 @@ import { useDisclosure } from "./use-disclosure";
 
 export const ACCOUNT_PANEL_ID = "account-menu";
 
+/**
+ * Fades in on open; collapses instantly. An exit animation needs the element
+ * to outlive the click that closed it, and keeping this one mounted is exactly
+ * what would put the email into every page's markup. The nav panel, which
+ * holds nothing private, animates both ways.
+ */
 const PANEL =
-  "absolute right-0 top-full z-20 mt-2 w-64 rounded-card border border-border bg-surface-raised p-2";
+  "absolute right-0 top-full z-20 mt-2 w-64 rounded-card border border-border bg-surface-raised " +
+  "p-2 motion-safe:animate-fade-in";
 
 const ITEM =
   "flex min-h-tap w-full items-center rounded-control px-3 text-base font-medium text-ink " +
