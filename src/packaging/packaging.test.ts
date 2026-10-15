@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -31,6 +32,8 @@ const e2eCredentials = readRepoFile("e2e/credentials.ts");
 const e2eServer = readRepoFile("e2e/server.ts");
 const dbHarness = readRepoFile("src/db/testing/harness.ts");
 const vitestConfig = readRepoFile("vitest.config.ts");
+const postcssConfig = readRepoFile("postcss.config.mjs");
+const rootLayout = readRepoFile("src/app/layout.tsx");
 
 const packageJson = JSON.parse(readRepoFile("package.json")) as {
   readonly scripts: Readonly<Record<string, string>>;
@@ -47,6 +50,60 @@ function ignoreEntries(text: string): readonly string[] {
 }
 
 /**
+ * Whether `.dockerignore` keeps `path` out of the build context.
+ *
+ * Asserting that an entry is absent says nothing about whether the *file* is:
+ * `**` + `/*.css`, `src/app/*.css` and a bare `src/app` all exclude
+ * `src/app/globals.css` without spelling it. So this follows Docker's own
+ * rules, as far as this repo's ignore file uses them — `*` and `?` stay within
+ * one path segment, `**` crosses any number, a pattern that matches a parent
+ * directory excludes everything under it, and the last matching line wins, so
+ * `!` re-includes. Patterns are path-cleaned first, as Docker does, so
+ * `./src/app` and `src//app` mean `src/app`.
+ *
+ * Character classes and escapes throw rather than being read as literals: a
+ * matcher that quietly answered "kept" for `[p]ostcss.config.mjs` would turn
+ * the guards below into tests of nothing. None occur today.
+ */
+function dockerIgnores(entries: readonly string[], path: string): boolean {
+  const segments = path.split("/");
+  const candidates = segments.map((_, i) => segments.slice(0, i + 1).join("/"));
+
+  let ignored = false;
+  for (const entry of entries) {
+    const negated = entry.startsWith("!");
+    const raw = negated ? entry.slice(1).trim() : entry;
+    if (/[[\]\\]/.test(raw)) {
+      throw new Error(`dockerIgnores cannot read ${JSON.stringify(entry)}; teach it first`);
+    }
+    const pattern = posix.normalize(raw).replace(/^(?:\.?\/)+|\/+$/g, "");
+    const source = pattern
+      .split(/(\*\*\/|\*\*|\*|\?)/)
+      .map((part, i, parts) => {
+        // Docker: a bare `**` at either end matches anything (`**.css` is a
+        // suffix match); in the middle, with or without a following slash, it
+        // matches zero or more whole directories.
+        if (part === "**") {
+          const atEnd = i === parts.length - 2 && parts.at(-1) === "";
+          const atStart = i === 1 && parts[0] === "";
+          return atStart || atEnd ? ".*" : "(?:.*/)?";
+        }
+        if (part === "**/") return "(?:.*/)?";
+        if (part === "*") return "[^/]*";
+        if (part === "?") return "[^/]";
+        return part.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+      })
+      .join("");
+    const regex = new RegExp(`^${source}$`);
+
+    if (candidates.some((candidate) => regex.test(candidate))) {
+      ignored = !negated;
+    }
+  }
+  return ignored;
+}
+
+/**
  * The Dockerfile with comment lines dropped. Assertions about what the build
  * *does* have to run against this — the comments explain why `npx` and bash are
  * avoided, and naming them there would otherwise trip the very checks that
@@ -56,6 +113,14 @@ const instructions = dockerfile
   .split("\n")
   .filter((line) => !line.trimStart().startsWith("#"))
   .join("\n");
+
+/** One stage of `instructions`, from its `FROM` up to the next. */
+function stage(name: string): string {
+  const match = new RegExp(`^FROM\\s+\\S+\\s+AS\\s+${name}\\b[\\s\\S]*?(?=^FROM\\s|(?![\\s\\S]))`, "m")
+    .exec(instructions);
+  if (!match) throw new Error(`Dockerfile has no stage named ${name}`);
+  return match[0];
+}
 
 /**
  * A TypeScript source with its comment *lines* dropped, for the same reason
@@ -88,6 +153,8 @@ function stripComments(source: string): string {
 
 const errorScreenCode = stripComments(errorScreen);
 const playwrightConfigCode = stripComments(playwrightConfig);
+const postcssConfigCode = stripComments(postcssConfig);
+const rootLayoutCode = stripComments(rootLayout);
 
 describe("docker-compose.yml", () => {
   it("defines both services SPEC.md §3 requires", () => {
@@ -177,6 +244,14 @@ describe("Dockerfile", () => {
 describe(".dockerignore", () => {
   const entries = ignoreEntries(dockerignore);
 
+  it("is the ignore file Docker actually reads", () => {
+    // BuildKit reads `Dockerfile.dockerignore` *instead of* `.dockerignore`
+    // when it exists — no merge. One stray file would put `.env`, `secrets/`
+    // and the e2e session cookie into the builder layers while every guard
+    // below went on checking a file nothing reads.
+    expect(existsSync(new URL("Dockerfile.dockerignore", `file://${repoRoot}`))).toBe(false);
+  });
+
   it("keeps secrets and local state out of the build context at every depth", () => {
     // Docker anchors slash-free patterns at the context root, unlike
     // .gitignore. A bare `.env` therefore lets `deploy/.env` into the image.
@@ -195,6 +270,107 @@ describe(".dockerignore", () => {
       expect(entries).not.toContain(needed);
       expect(entries).not.toContain(`${needed}/`);
     }
+  });
+});
+
+/**
+ * The Tailwind build (SPEC.md §3.1, §5).
+ *
+ * Every link in this chain fails quietly. Drop the PostCSS config or the
+ * stylesheet import and `next build` still succeeds; so does a Docker build
+ * whose context is missing the CSS. What comes up is an unstyled app with a
+ * green healthcheck, and the only test that would notice is the smoke suite,
+ * which is run by hand.
+ */
+describe("Tailwind", () => {
+  it("is wired through the root PostCSS config", () => {
+    // Tailwind v4 is a PostCSS plugin and nothing else; with no config, the
+    // `@import "tailwindcss"` in globals.css is passed through uncompiled.
+    // An object, not `false`, which Next reads as "plugin disabled".
+    expect(postcssConfigCode).toMatch(/plugins:\s*\{\s*"@tailwindcss\/postcss":\s*\{/);
+  });
+
+  it("has no second PostCSS config that would be read first", () => {
+    // Turbopack looks for `.postcssrc*` and `postcss.config.js` ahead of the
+    // `.mjs`; a sibling without Tailwind would win while the check above went
+    // on reading a file nothing loads.
+    const configs = readdirSync(repoRoot).filter((name) =>
+      /^(?:\.postcssrc|postcss\.config\.)/.test(name),
+    );
+    expect(configs).toEqual(["postcss.config.mjs"]);
+    expect(packageJson).not.toHaveProperty("postcss");
+  });
+
+  it("has its stylesheet imported by the root layout", () => {
+    expect(rootLayoutCode).toMatch(/^import "\.\/globals\.css";$/m);
+  });
+
+  it.each(["tailwindcss", "@tailwindcss/postcss"])(
+    "keeps %s a build-time dependency, out of the runtime image",
+    (name) => {
+      // SPEC.md §3.1: both are devDependencies. `@tailwindcss/oxide` ships a
+      // per-platform native binary that has no business in the runtime image,
+      // and the compiled CSS is all the app needs at run time.
+      expect(packageJson.devDependencies).toHaveProperty(name);
+      expect(packageJson.dependencies).not.toHaveProperty(name);
+    },
+  );
+
+  it.each(["postcss.config.mjs", "src/app/globals.css"])(
+    "leaves %s in the Docker build context",
+    (path) => {
+      // Excluding either still builds an image, only without styles.
+      expect(dockerIgnores(ignoreEntries(dockerignore), path)).toBe(false);
+    },
+  );
+
+  it("reads .dockerignore the way Docker does, not as a list of strings", () => {
+    // The self-test for `dockerIgnores`. A matcher that always said `false`
+    // would make both checks above pass on an ignore file excluding `src/`.
+    const entries = ignoreEntries(dockerignore);
+    expect(dockerIgnores(entries, "deploy/.env")).toBe(true);
+    expect(dockerIgnores(entries, ".env.example")).toBe(false);
+    expect(dockerIgnores(entries, "e2e/.auth/household.json")).toBe(true);
+    expect(dockerIgnores(entries, "src/app/page.test.tsx")).toBe(true);
+
+    for (const pattern of ["**/*.css", "src/app/*.css", "src/app", "src/", "/postcss.*"]) {
+      const excludes = (path: string) => dockerIgnores([pattern], path);
+      expect(excludes("src/app/globals.css") || excludes("postcss.config.mjs")).toBe(true);
+    }
+
+    // And not more than Docker would: a slash-free pattern is anchored at the
+    // context root, so `*.css` reaches a root-level stylesheet and no further.
+    expect(dockerIgnores(["*.css"], "src/app/globals.css")).toBe(false);
+    expect(dockerIgnores(["*.css"], "globals.css")).toBe(true);
+  });
+
+  it("cleans patterns and reads `**` and `!` as Docker does", () => {
+    // Each case here was checked against a real BuildKit build context.
+    for (const pattern of ["./src/app", "src//app", "src/app/../../src/app"]) {
+      expect(dockerIgnores([pattern], "src/app/globals.css")).toBe(true);
+    }
+    expect(dockerIgnores(["**.css"], "src/app/globals.css")).toBe(true);
+    expect(dockerIgnores(["src/**.css"], "src/app/globals.css")).toBe(false);
+    expect(dockerIgnores(["src", "! src/app"], "src/app/globals.css")).toBe(false);
+  });
+
+  it("refuses an ignore pattern it cannot read rather than misreading it", () => {
+    expect(() => dockerIgnores(["[p]ostcss.config.mjs"], "postcss.config.mjs")).toThrow();
+    expect(() => dockerIgnores(["postcss\\.config.mjs"], "postcss.config.mjs")).toThrow();
+  });
+
+  it("copies the whole repo into the build, so the config is there to find", () => {
+    // A selective `COPY src ./src` would drop postcss.config.mjs without any
+    // .dockerignore change, and `next build` would still succeed.
+    expect(stage("builder")).toMatch(/^COPY \. \.$/m);
+  });
+
+  it("ships the compiled stylesheet in the runtime image", () => {
+    // Turbopack emits the CSS under .next/static/chunks/, which the standalone
+    // output does not include — the runtime stage has to copy it over itself.
+    expect(stage("runtime")).toMatch(
+      /^COPY --from=builder\b[^\n]*\/app\/\.next\/static \.\/\.next\/static$/m,
+    );
   });
 });
 
