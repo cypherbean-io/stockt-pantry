@@ -657,5 +657,38 @@ The DB suite starts its own disposable Postgres from `docker-compose.test.yml` a
 it down with `npm run db:test:down`. It never touches your dev database unless you set
 `TEST_DATABASE_URL` — which you should not, since it `TRUNCATE`s before every test.
 
+### Browser smoke tests
+
+A Playwright suite drives a production build in Chromium: the app shell, sign-out, the
+theme toggle, the 375px phone layout, the recipe status buckets, the 404 page and the
+shopping-list clipboard. Every page a spec drives fails the run if it requests anything from
+another origin.
+It is run by hand; there is no CI.
+
+```bash
+npx playwright install --with-deps chromium   # once; needs root for the system libraries
+npm run test:e2e
+npm run verify      # lint → typecheck → unit + DB tests → smoke tests, in that order
+```
+
+`test:e2e` builds the app and serves `.next/standalone/server.js` — the same artifact the
+Docker image runs — on `127.0.0.1:3100`, against the throwaway test Postgres. It generates
+a fresh signup token and password per run and sets the database URL explicitly, so your
+`.env` needs nothing extra and cannot point the suite at your dev database. Keep it on
+loopback: the build sets a `Secure` session cookie, and loopback is the only plain-HTTP
+origin a browser will send it to.
+
+Without root to install Chromium's libraries, run the suite from the official image
+instead. The host keeps the database and the build:
+
+```bash
+docker compose -f docker-compose.test.yml up -d --wait
+docker run --rm --network host --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work \
+  -e HOME=/tmp -e TEST_DATABASE_URL="postgres://postgres@127.0.0.1:55432/stockt_test" \
+  mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test
+```
+
+`--user` keeps the container from writing root-owned files into the working tree.
+
 See [`README.md`](../README.md) for the full command table and [`CLAUDE.md`](../CLAUDE.md)
 for the design trade-offs behind auth, the query layer, the importer, and this packaging.

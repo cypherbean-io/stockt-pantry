@@ -83,7 +83,7 @@ export function FieldError({
     <span
       id={`${id}-error`}
       role="alert"
-      className="block text-sm font-medium text-status-gap-ink"
+      className="block text-sm font-medium text-status-gap-ink motion-safe:animate-fade-in"
     >
       {error}
     </span>
@@ -94,6 +94,10 @@ export function FieldError({
  * The form-level message, distinct from the per-field ones. "Email or password
  * is wrong" belongs to the form, because naming which of the two was wrong
  * would leak whether the address exists.
+ *
+ * Both messages fade in (SPEC.md §2 item 12). Each is mounted only when there
+ * is something to say, so the entrance runs exactly when a message appears and
+ * not when an existing one changes wording.
  */
 export function FormMessage({ message }: { readonly message?: string }): ReactElement | null {
   if (message === undefined) return null;
@@ -101,7 +105,7 @@ export function FormMessage({ message }: { readonly message?: string }): ReactEl
   return (
     <p
       role="alert"
-      className="rounded-control bg-status-gap px-3 py-2 text-sm font-medium text-status-gap-ink"
+      className="rounded-control bg-status-gap px-3 py-2 text-sm font-medium text-status-gap-ink motion-safe:animate-fade-in"
     >
       {message}
     </p>

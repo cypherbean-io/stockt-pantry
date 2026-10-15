@@ -173,6 +173,10 @@ const ROUTES = [
   { name: "/pantry", path: () => "/pantry" },
   // A function, because the id only exists once `beforeAll` has run.
   { name: "/recipes/[id]", path: () => `/recipes/${recipeId}` },
+  // Layout only (SPEC.md §5): the import fetch itself is not exercised, because
+  // the SSRF guard rejects the loopback a fixture would need and public recipe
+  // sites are not something a test suite should depend on.
+  { name: "/recipes/import", path: () => "/recipes/import" },
 ] as const;
 
 for (const route of ROUTES) {

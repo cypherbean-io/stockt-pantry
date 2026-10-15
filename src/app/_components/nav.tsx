@@ -70,11 +70,26 @@ const LINK_STATE = {
  * is the row of links itself. Only `hidden`/`flex` is toggled, so the `sm:`
  * rules keep the nav visible on a desktop no matter what the disclosure
  * thinks — the button that would open it is not rendered there.
+ *
+ * Expand and collapse are animated in CSS alone (SPEC.md §2 item 12).
+ * `transition-discrete` holds `display` until the opacity has finished, so
+ * collapse is visible rather than gone on the first frame; `starting:` gives
+ * the expand a transparent first frame out of `display: none`. `starting:` is
+ * `max-sm:` only, because at `sm` the panel is the always-visible nav bar and
+ * would otherwise fade in on every full page load. A browser without
+ * `allow-discrete` toggles instantly, which is what this did before.
  */
 const PANEL =
   "absolute right-0 top-full z-20 mt-2 w-48 flex-col gap-1 rounded-card border border-border " +
   "bg-surface-raised p-2 sm:static sm:mt-0 sm:flex sm:w-auto sm:flex-row sm:gap-1 " +
-  "sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0";
+  "sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0 sm:translate-y-0 sm:opacity-100 " +
+  "motion-safe:transition-disclosure motion-safe:transition-discrete " +
+  "max-sm:starting:-translate-y-1 max-sm:starting:opacity-0";
+
+const PANEL_STATE = {
+  open: "flex",
+  closed: "hidden -translate-y-1 opacity-0",
+} as const;
 
 export function NavBar({ pathname }: { readonly pathname: string | null }): ReactElement {
   const { open, toggle, close, containerRef, triggerRef } = useDisclosure<HTMLElement>();
@@ -94,7 +109,7 @@ export function NavBar({ pathname }: { readonly pathname: string | null }): Reac
         Menu
       </Button>
 
-      <ul id={NAV_PANEL_ID} className={cx(PANEL, open ? "flex" : "hidden")}>
+      <ul id={NAV_PANEL_ID} className={cx(PANEL, open ? PANEL_STATE.open : PANEL_STATE.closed)}>
         {NAV_ITEMS.map(({ href, label }) => {
           const current = isCurrent(pathname, href);
 
