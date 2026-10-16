@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# PostToolUse (matcher: Edit|Write) — format the file that was just edited.
+# PostToolUse hook (matcher: Edit|Write)
+# Formats the file that was just edited, if a formatter is configured.
 # Must never block: always exit 0, including when no JSON parser is available.
 set -uo pipefail
 
@@ -23,7 +24,9 @@ fi
 
 case "$FILE" in
   *.ts|*.tsx|*.js|*.jsx|*.json|*.css|*.md|*.yaml|*.yml)
-    [ -x node_modules/.bin/prettier ] && node_modules/.bin/prettier --write "$FILE" >/dev/null 2>&1 || true
+    if [ -x node_modules/.bin/prettier ]; then
+      node_modules/.bin/prettier --write "$FILE" >/dev/null 2>&1 || true
+    fi
     ;;
   *.py)
     command -v ruff >/dev/null 2>&1 && ruff format "$FILE" >/dev/null 2>&1 || true
