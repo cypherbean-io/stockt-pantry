@@ -3,6 +3,7 @@ name: deep-research
 description: Research a topic across the codebase in an isolated context and return a cited summary. Use for "how does X work" questions that would otherwise read many files.
 context: fork
 agent: Explore
+background: false
 argument-hint: "[topic or question]"
 ---
 

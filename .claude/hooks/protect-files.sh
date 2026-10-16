@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# PreToolUse (matcher: Edit|Write|NotebookEdit) — block edits to sensitive paths.
-# Exit 2 blocks the call; stderr is fed back to Claude as feedback.
+# PreToolUse hook (matcher: Edit|Write|NotebookEdit)
+# Blocks edits to sensitive or agent-configuration paths.
+# Exit 2 = block; the stderr message is fed back to Claude as feedback.
 #
 # FAILS CLOSED: if neither jq nor python3 is on PATH, this blocks rather than
-# silently allowing everything. A guard hook that depends on a tool you may not
-# have installed is worse than no guard hook at all.
+# silently allowing everything.
 set -uo pipefail
 
 INPUT=$(cat)
@@ -33,7 +33,8 @@ fi
 [ -z "$FILE_PATH" ] && FILE_PATH=$(extract tool_input.notebook_path)
 [ -z "$FILE_PATH" ] && exit 0
 
-FILE_PATH="${FILE_PATH//\\//}"   # normalize Windows separators
+# Normalize Windows separators so the patterns below match.
+FILE_PATH="${FILE_PATH//\\//}"
 
 PROTECTED=(
   ".env"
@@ -42,6 +43,7 @@ PROTECTED=(
   ".github/workflows/"
   ".claude/settings.json"
   ".claude/hooks/"
+  ".claude/scaffold-manifest"
   ".mcp.json"
   "id_rsa"
   ".pem"
