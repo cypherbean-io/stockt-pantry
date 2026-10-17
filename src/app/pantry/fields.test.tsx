@@ -40,6 +40,30 @@ describe("the density field", () => {
   it("stays optional, because blank is a real answer", () => {
     expect(renderToStaticMarkup(<DensityField />)).not.toContain("required");
   });
+
+  it("derives every id from the row it belongs to", () => {
+    // `/pantry` renders one per row to edit an existing entry's density, beside
+    // the add form's own — which keeps the unprefixed id.
+    const markup = renderToStaticMarkup(<DensityField idPrefix="row-1" />);
+
+    expect(markup).toContain('id="row-1-density"');
+    expect(markup).toContain('for="row-1-density"');
+    expect(markup).toContain('id="row-1-density-hint"');
+    expect(markup).not.toContain('id="densityGPerMl"');
+    expect(danglingDescriptions(markup)).toEqual([]);
+  });
+
+  it("submits under the same name wherever it is rendered", () => {
+    expect(renderToStaticMarkup(<DensityField idPrefix="row-1" />)).toContain(
+      'name="densityGPerMl"',
+    );
+  });
+
+  it("starts from the density the entry already has", () => {
+    const markup = renderToStaticMarkup(<DensityField idPrefix="row-1" defaultValue="0.53" />);
+
+    expect(markup).toContain('value="0.53"');
+  });
 });
 
 describe("the amount fields", () => {

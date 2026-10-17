@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { createIngredient } from "./queries/ingredients";
+import {
+  createIngredient,
+  findIngredientByName,
+  setIngredientDensity,
+} from "./queries/ingredients";
 import { listPantryWithIngredients, setPantryEntry } from "./queries/pantry";
 import { createRecipe, findRecipeWithLines, listRecipesWithLines } from "./queries/recipes";
 import { unsafeHouseholdScopeFromId, type HouseholdScope } from "./scope";
@@ -129,6 +133,29 @@ describe("matching a stored recipe against a stored pantry", () => {
     expect(vanilla?.status).toBe("unresolved");
     expect(vanilla?.available).toBeNull();
     expect(vanilla?.shortfall).toBe(0);
+  });
+
+  it("resolves a can't-verify line once the ingredient's density is set", async () => {
+    const recipeId = await seedCookies();
+    const vanilla = await findIngredientByName(scope, "Vanilla extract");
+    if (vanilla === undefined) throw new Error("the seeded vanilla was not found");
+
+    await setIngredientDensity(scope, vanilla.id, 0.88);
+
+    // 30 g held, over 0.88 g/mL, is ~34 mL against 2 tsp (~9.86 mL) wanted.
+    expect(statuses(await evaluate(recipeId))["Vanilla extract"]).toBe("have");
+  });
+
+  it("reports can't verify again once the ingredient's density is cleared", async () => {
+    const recipeId = await seedCookies();
+    const sugar = await findIngredientByName(scope, "Sugar");
+    if (sugar === undefined) throw new Error("the seeded sugar was not found");
+
+    await setIngredientDensity(scope, sugar.id, null);
+
+    // Cups held against grams wanted: without a density there is no answer,
+    // and the line must not quietly stay "have" or turn "missing".
+    expect(statuses(await evaluate(recipeId)).Sugar).toBe("unresolved");
   });
 
   it("reports a fully stocked recipe as makeable", async () => {

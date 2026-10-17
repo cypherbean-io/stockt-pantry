@@ -12,6 +12,7 @@ import {
   findOrCreateIngredient,
   listIngredients,
   searchIngredients,
+  setIngredientDensity,
 } from "./queries/ingredients";
 import {
   deletePantryItem,
@@ -213,11 +214,50 @@ describe("ingredient catalog", () => {
   });
 
   it("keeps the density of an entry that already exists", async () => {
-    // SPEC.md §2 puts editing densities of existing ingredients out of scope,
-    // so resolving a name must not be a back door into overwriting one.
+    // Changing a density is `setIngredientDensity`'s job, and only that, so
+    // resolving a name must not be a back door into overwriting one.
     const resolved = await findOrCreateIngredient(scopeA, { name: "Flour", densityGPerMl: 9 });
 
     expect(resolved.densityGPerMl).toBe(0.53);
+  });
+
+  it("sets the density of its own entry", async () => {
+    const updated = await setIngredientDensity(scopeA, alpha.ingredientId, 0.6);
+
+    expect(updated?.densityGPerMl).toBe(0.6);
+    expect((await findIngredientById(scopeA, alpha.ingredientId))?.densityGPerMl).toBe(0.6);
+  });
+
+  it("does not set the density of another household's entry", async () => {
+    expect(await setIngredientDensity(scopeA, beta.ingredientId, 9.9)).toBeUndefined();
+    expect((await findIngredientById(scopeB, beta.ingredientId))?.densityGPerMl).toBe(0.53);
+  });
+
+  it("does not clear the density of another household's entry", async () => {
+    expect(await setIngredientDensity(scopeA, beta.ingredientId, null)).toBeUndefined();
+    expect((await findIngredientById(scopeB, beta.ingredientId))?.densityGPerMl).toBe(0.53);
+  });
+
+  it("rejects a NaN density at the data-entry layer, before the database sees it", async () => {
+    await expect(setIngredientDensity(scopeA, alpha.ingredientId, Number.NaN)).rejects.toThrow(
+      /Density must be a finite quantity/,
+    );
+    expect((await findIngredientById(scopeA, alpha.ingredientId))?.densityGPerMl).toBe(0.53);
+  });
+
+  it("does not carry the statement or its parameters out of setIngredientDensity", async () => {
+    // A malformed uuid is the cheapest way to provoke a driver error (SQLSTATE
+    // 22P02). The parser rules it out first; this is the backstop behind it.
+    const marker = "DIGEST-MARKER-NOT-A-UUID";
+    const message = await setIngredientDensity(scopeA, marker, 0.6).then(
+      () => "resolved",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+
+    expect(message).not.toContain(marker);
+    expect(message).not.toContain("params:");
+    expect(message).not.toContain("Failed query");
+    expect(message).toContain("22P02");
   });
 });
 

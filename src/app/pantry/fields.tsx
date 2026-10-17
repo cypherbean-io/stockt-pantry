@@ -116,19 +116,34 @@ const DENSITY_HINT =
  * Which is why `describedBy` is told about the hint as well as the error: that
  * sentence is the only place the app explains the rule, and a description that
  * skipped it would hide it from anyone not reading the screen.
+ *
+ * The add form renders one, unprefixed; every pantry row renders another to
+ * edit its entry's density, so there the ids are prefixed as `AmountFields`'
+ * are. The submitted name is the same either way.
  */
-export function DensityField({ error }: { error?: string }) {
+export function DensityField({
+  idPrefix,
+  defaultValue,
+  error,
+}: {
+  idPrefix?: string;
+  defaultValue?: string;
+  error?: string;
+}) {
+  const id = idPrefix === undefined ? "densityGPerMl" : `${idPrefix}-density`;
+
   return (
-    <Field id="densityGPerMl" label="Density in g/mL (optional)" hint={DENSITY_HINT} error={error}>
+    <Field id={id} label="Density in g/mL (optional)" hint={DENSITY_HINT} error={error}>
       <input
-        id="densityGPerMl"
+        id={id}
         name="densityGPerMl"
         type="number"
         min="0"
         step="any"
         inputMode="decimal"
+        defaultValue={defaultValue}
         className={controlClass}
-        {...describedBy("densityGPerMl", { hint: true, error })}
+        {...describedBy(id, { hint: true, error })}
       />
     </Field>
   );

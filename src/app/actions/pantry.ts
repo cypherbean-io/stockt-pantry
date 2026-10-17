@@ -7,6 +7,7 @@ import type { FieldErrors } from "@/lib/forms";
 import {
   removePantryItem,
   restockPantryItem,
+  setPantryIngredientDensity,
   stockPantryItem,
   type PantryError,
   type PantryResult,
@@ -98,6 +99,25 @@ export async function removePantryItemAction(
 
   if (!result.ok) return failure(result);
 
+  refresh();
+  return undefined;
+}
+
+export async function setIngredientDensityAction(
+  _state: PantryFormState,
+  formData: FormData,
+): Promise<PantryFormState> {
+  const scope = await requireScope();
+
+  const result = await setPantryIngredientDensity(scope, {
+    ingredientId: formData.get("ingredientId"),
+    densityGPerMl: formData.get("densityGPerMl"),
+  });
+
+  if (!result.ok) return failure(result);
+
+  // No match is not an error, on the same terms as an amount update: the
+  // entry was another household's or has gone, and the list is the answer.
   refresh();
   return undefined;
 }

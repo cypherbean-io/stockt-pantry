@@ -100,12 +100,31 @@ function ingredientNameError(value: unknown): string | undefined {
 }
 
 /**
+ * An optional density: blank means "none", which is a real answer (SPEC.md §3,
+ * a mass<->volume line with no density reports "can't verify"). Shared by the
+ * add form and the edit, so the two cannot drift on what they accept.
+ */
+function parseOptionalDensity(value: unknown): Parsed<number | null> {
+  if (isBlank(value)) return { ok: true, value: null };
+
+  const density = positiveNumber(value);
+  if (density === undefined) {
+    return {
+      ok: false,
+      errors: { densityGPerMl: "Enter a density in g/mL above zero, or leave it blank." },
+    };
+  }
+  return { ok: true, value: density };
+}
+
+/**
  * Which catalog entry the row is about: one already in the household's
  * catalog, or one to create from the name given.
  *
- * The density is read only on the "new" branch. v1 has no surface for editing
- * an existing ingredient's density (SPEC.md §2, Out), and a field a crafted
- * POST could set would be exactly that surface.
+ * The density is read only on the "new" branch. Changing an existing entry's
+ * density is its own deliberate action (`parseDensityUpdate` below), and a
+ * field on this form that a crafted POST could set would be a second, quieter
+ * one.
  */
 function parseIngredientChoice(input: PantryEntryInput): Parsed<IngredientChoice> {
   if (input.ingredientId === NEW_INGREDIENT) {
@@ -114,15 +133,10 @@ function parseIngredientChoice(input: PantryEntryInput): Parsed<IngredientChoice
     const nameError = ingredientNameError(input.ingredientName);
     if (nameError !== undefined) errors.ingredientName = nameError;
 
-    let densityGPerMl: number | undefined;
-    if (!isBlank(input.densityGPerMl)) {
-      densityGPerMl = positiveNumber(input.densityGPerMl);
-      if (densityGPerMl === undefined) {
-        errors.densityGPerMl = "Enter a density in g/mL above zero, or leave it blank.";
-      }
-    }
+    const density = parseOptionalDensity(input.densityGPerMl);
+    if (!density.ok) Object.assign(errors, density.errors);
 
-    if (Object.keys(errors).length > 0) return { ok: false, errors };
+    if (!density.ok || Object.keys(errors).length > 0) return { ok: false, errors };
 
     return {
       ok: true,
@@ -131,7 +145,7 @@ function parseIngredientChoice(input: PantryEntryInput): Parsed<IngredientChoice
         name: (input.ingredientName as string).trim(),
         // Spread rather than an explicit `undefined`, so "no density given"
         // stays a missing property rather than a present one holding nothing.
-        ...(densityGPerMl === undefined ? {} : { densityGPerMl }),
+        ...(density.value === null ? {} : { densityGPerMl: density.value }),
       },
     };
   }
@@ -193,4 +207,44 @@ export function parsePantryItemId(value: unknown): Parsed<string> {
     return { ok: false, errors: { id: "That pantry item is no longer there." } };
   }
   return { ok: true, value };
+}
+
+export type DensityUpdate = {
+  readonly ingredientId: string;
+  /** Null clears it, which puts mass<->volume back to "can't verify". */
+  readonly densityGPerMl: number | null;
+};
+
+/**
+ * A new density for a catalog entry the household already has — the row on
+ * `/pantry` that set it, or corrects it, after the entry was created.
+ *
+ * Blank clears it rather than being rejected: a density nobody is sure of is
+ * worse than none, because a wrong one turns "can't verify" into a confident
+ * wrong answer. The message for a bad id is as uninformative as
+ * `parsePantryItemId`'s, for the same reason.
+ */
+export function parseDensityUpdate(input: {
+  readonly ingredientId: unknown;
+  readonly densityGPerMl: unknown;
+}): Parsed<DensityUpdate> {
+  const density = parseOptionalDensity(input.densityGPerMl);
+  const ingredientId =
+    typeof input.ingredientId === "string" && UUID.test(input.ingredientId)
+      ? input.ingredientId
+      : undefined;
+
+  if (!density.ok || ingredientId === undefined) {
+    return {
+      ok: false,
+      errors: {
+        ...(density.ok ? {} : density.errors),
+        ...(ingredientId === undefined
+          ? { ingredientId: "That ingredient is no longer in this household's catalog." }
+          : {}),
+      },
+    };
+  }
+
+  return { ok: true, value: { ingredientId, densityGPerMl: density.value } };
 }

@@ -131,9 +131,9 @@ export async function createIngredient(
  * driver error out of here would carry the bound values into a log
  * (CLAUDE.md) — `guarded` is what stops that.
  *
- * An existing entry is returned untouched, density included. v1 has no surface
- * for editing an existing ingredient's density (SPEC.md §2, Out), and quietly
- * overwriting it here would be one.
+ * An existing entry is returned untouched, density included. Changing a density
+ * is `setIngredientDensity`'s job, done deliberately from the entry's own row;
+ * quietly overwriting it here would make typing a known name do it too.
  */
 export async function findOrCreateIngredient(
   scope: HouseholdScope,
@@ -160,4 +160,31 @@ export async function findOrCreateIngredient(
     throw new Error("Insert conflicted but no ingredient row was found");
   }
   return existing;
+}
+
+/**
+ * Set or clear (`null`) the density of an entry the household already has.
+ *
+ * Returns the updated row, or `undefined` when the id is not this household's
+ * — another tenant's entry and one that never existed get the same answer, as
+ * they do in `setPantryQuantity`. Guarded because a density is catalog content
+ * and the driver's message would quote it alongside the id.
+ */
+export async function setIngredientDensity(
+  scope: HouseholdScope,
+  id: string,
+  densityGPerMl: number | null,
+): Promise<IngredientRow | undefined> {
+  // Outside the guard, as in `createIngredient`: a NaN or Infinity is stopped
+  // here with a message worth showing, before the CHECK constraint is reached.
+  const density = assertOptionalDensity(densityGPerMl ?? undefined) ?? null;
+
+  const rows = await guarded(LABEL, () =>
+    getDb()
+      .update(ingredient)
+      .set({ densityGPerMl: density })
+      .where(ownedBy(scope, ingredient, eq(ingredient.id, id)))
+      .returning(),
+  );
+  return rows[0];
 }

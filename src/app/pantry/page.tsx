@@ -24,6 +24,7 @@ export default async function PantryPage() {
     <PantryScreen
       items={stocked.map(({ item, ingredient }) => ({
         id: item.id,
+        ingredientId: ingredient.id,
         name: ingredient.name,
         quantity: item.quantity,
         unitId: item.unitId,
