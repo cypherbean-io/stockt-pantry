@@ -1,11 +1,14 @@
 "use server";
 
+import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 
 import {
   issueInvite,
   joinWithInvite,
   logIn,
+  removeMember,
+  revokeInvite,
   signUpHousehold,
   type AuthError,
   type AuthResult,
@@ -115,4 +118,38 @@ export async function createInviteAction(): Promise<InviteState> {
   const invite = await issueInvite(scope, session.userId);
 
   return { path: `/join/${invite.token}`, expiresAt: invite.expiresAt.toISOString() };
+}
+
+/**
+ * Revoke one of the household's open invites.
+ *
+ * The id in the form says which invite; the scope off the session says whose,
+ * so a hand-edited id reaches a query that cannot see another household's. No
+ * match is not reported as an error: the invite was someone else's, already
+ * used, or already gone, and the honest answer to all three is the list as it
+ * stands. `refresh()` for the reason `actions/pantry.ts` gives.
+ */
+export async function revokeInviteAction(formData: FormData): Promise<void> {
+  const scope = await requireScope();
+
+  await revokeInvite(scope, formData.get("inviteId"));
+
+  refresh();
+}
+
+/**
+ * Remove another member of the household.
+ *
+ * Who is asking comes off the session and nowhere else — the form names only
+ * who is to go. On the same terms as revoking, a refusal (yourself, someone
+ * who joined before you, someone already gone, someone in another household)
+ * re-renders the list rather than saying which it was.
+ */
+export async function removeMemberAction(formData: FormData): Promise<void> {
+  const session = await requireSession();
+  const scope = await requireScope();
+
+  await removeMember(scope, session.userId, formData.get("memberId"));
+
+  refresh();
 }
