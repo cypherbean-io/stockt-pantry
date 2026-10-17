@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_INGREDIENT_NAME_LENGTH,
   NEW_INGREDIENT,
+  parseDensityUpdate,
   parsePantryAmount,
   parsePantryEntry,
   parsePantryItemId,
@@ -165,8 +166,8 @@ describe("parsePantryEntry, the optional density", () => {
   });
 
   it("ignores a density submitted against an existing catalog entry", () => {
-    // v1 has no surface for editing an existing ingredient's density
-    // (SPEC.md §2, Out) — a crafted field must not become one.
+    // Changing an existing entry's density is its own deliberate action
+    // (`parseDensityUpdate`) — a crafted field here must not be a second one.
     const parsed = parsePantryEntry(existingEntry({ densityGPerMl: "9.9" }));
 
     expect(parsed.ok && parsed.value.ingredient).toEqual({ kind: "existing", id: EXISTING_ID });
@@ -245,5 +246,76 @@ describe("parsePantryItemId", () => {
 
   it("rejects a missing id", () => {
     expect(parsePantryItemId(null).ok).toBe(false);
+  });
+});
+
+describe("parseDensityUpdate", () => {
+  it("reads a catalog id and a density in g/mL", () => {
+    expect(parseDensityUpdate({ ingredientId: EXISTING_ID, densityGPerMl: " 0.85 " })).toEqual({
+      ok: true,
+      value: { ingredientId: EXISTING_ID, densityGPerMl: 0.85 },
+    });
+  });
+
+  it("reads a blank density as clearing it, not as zero", () => {
+    // Null is what makes a mass<->volume line report "can't verify" again
+    // (SPEC.md §3). `Number("")` is 0, which the CHECK constraint rejects.
+    expect(parseDensityUpdate({ ingredientId: EXISTING_ID, densityGPerMl: "  " })).toEqual({
+      ok: true,
+      value: { ingredientId: EXISTING_ID, densityGPerMl: null },
+    });
+  });
+
+  it("reads a missing density field as clearing it", () => {
+    expect(parseDensityUpdate({ ingredientId: EXISTING_ID, densityGPerMl: null })).toEqual({
+      ok: true,
+      value: { ingredientId: EXISTING_ID, densityGPerMl: null },
+    });
+  });
+
+  it.each([
+    ["zero", "0"],
+    ["negative", "-0.5"],
+    ["NaN, which slips past a bare `> 0` guard", "NaN"],
+    ["infinite", "Infinity"],
+    ["overflowing to infinity", "1e309"],
+    ["not a number", "heavy"],
+  ])("rejects a density that is %s", (_name, densityGPerMl) => {
+    expect(parseDensityUpdate({ ingredientId: EXISTING_ID, densityGPerMl })).toEqual({
+      ok: false,
+      errors: { densityGPerMl: expect.any(String) },
+    });
+  });
+
+  it("rejects a density that did not arrive as text", () => {
+    // A multipart POST can carry a file where the form put a number input.
+    const parsed = parseDensityUpdate({
+      ingredientId: EXISTING_ID,
+      densityGPerMl: new Blob(["0.85"]),
+    });
+
+    expect(parsed).toEqual({ ok: false, errors: { densityGPerMl: expect.any(String) } });
+  });
+
+  it("rejects a catalog id that is not a well-formed uuid", () => {
+    // The `uuid` column would reject it with SQLSTATE 22P02, and that error
+    // carries the bound values (CLAUDE.md).
+    expect(parseDensityUpdate({ ingredientId: "not-a-uuid", densityGPerMl: "0.85" })).toEqual({
+      ok: false,
+      errors: { ingredientId: expect.any(String) },
+    });
+  });
+
+  it("rejects a missing catalog id", () => {
+    expect(parseDensityUpdate({ ingredientId: null, densityGPerMl: "0.85" }).ok).toBe(false);
+  });
+
+  it("reports every bad field at once rather than one per submission", () => {
+    const parsed = parseDensityUpdate({ ingredientId: "nope", densityGPerMl: "nope" });
+
+    expect(!parsed.ok && Object.keys(parsed.errors).sort()).toEqual([
+      "densityGPerMl",
+      "ingredientId",
+    ]);
   });
 });

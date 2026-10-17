@@ -3,11 +3,16 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { ingredient, pantryItem } from "./schema";
 import { unsafeHouseholdScopeFromId, type HouseholdScope } from "./scope";
-import { findIngredientByName, listIngredients } from "./queries/ingredients";
+import { findIngredientById, findIngredientByName, listIngredients } from "./queries/ingredients";
 import { findPantryItemById, listPantryWithIngredients } from "./queries/pantry";
 import { resetDatabase, seedHousehold, testDb, type SeededHousehold } from "./testing/harness";
 import { NEW_INGREDIENT } from "@/lib/pantry/entry";
-import { removePantryItem, restockPantryItem, stockPantryItem } from "@/lib/pantry/service";
+import {
+  removePantryItem,
+  restockPantryItem,
+  setPantryIngredientDensity,
+  stockPantryItem,
+} from "@/lib/pantry/service";
 
 /**
  * The pantry inventory flows against a real Postgres (SPEC.md §2, "Pantry
@@ -96,8 +101,8 @@ describe("stocking an item under a name already in the catalog", () => {
   });
 
   it("does not overwrite the existing entry's density", async () => {
-    // v1 has no surface for editing an existing ingredient's density
-    // (SPEC.md §2, Out); reaching one through the add form would be one.
+    // Changing a density is its own action (`setPantryIngredientDensity`,
+    // below). Typing a name already in the catalog must not quietly do it too.
     await stockPantryItem(
       scopeA,
       newEntry({ ingredientName: "Flour", densityGPerMl: "9.9", unitId: "g", quantity: "1" }),
@@ -278,5 +283,57 @@ describe("taking an item off the shelf", () => {
 
     expect(result).toMatchObject({ ok: false, error: "invalid-input" });
     expect(await db.select().from(pantryItem).where(eq(pantryItem.id, alpha.pantryItemId))).toHaveLength(1);
+  });
+});
+
+describe("setting an existing ingredient's density", () => {
+  it("replaces the density on the household's own catalog entry", async () => {
+    const result = await setPantryIngredientDensity(scopeA, {
+      ingredientId: alpha.ingredientId,
+      densityGPerMl: "0.6",
+    });
+
+    expect(result).toEqual({ ok: true, value: true });
+    expect((await findIngredientById(scopeA, alpha.ingredientId))?.densityGPerMl).toBe(0.6);
+  });
+
+  it("clears the density when the field is blank, so conversions report can't verify", async () => {
+    const result = await setPantryIngredientDensity(scopeA, {
+      ingredientId: alpha.ingredientId,
+      densityGPerMl: "",
+    });
+
+    expect(result).toEqual({ ok: true, value: true });
+    expect((await findIngredientById(scopeA, alpha.ingredientId))?.densityGPerMl).toBeNull();
+  });
+
+  it("changes nothing when the id belongs to another household", async () => {
+    const result = await setPantryIngredientDensity(scopeA, {
+      ingredientId: beta.ingredientId,
+      densityGPerMl: "9.9",
+    });
+
+    // Indistinguishable from an id nobody has, as for the pantry rows above.
+    expect(result).toEqual({ ok: true, value: false });
+    expect((await findIngredientById(scopeB, beta.ingredientId))?.densityGPerMl).toBe(0.53);
+  });
+
+  it("rejects an id that is not a uuid before it reaches the column", async () => {
+    const result = await setPantryIngredientDensity(scopeA, {
+      ingredientId: "not-a-uuid",
+      densityGPerMl: "0.6",
+    });
+
+    expect(result).toMatchObject({ ok: false, error: "invalid-input" });
+  });
+
+  it("rejects an infinite density without writing it", async () => {
+    const result = await setPantryIngredientDensity(scopeA, {
+      ingredientId: alpha.ingredientId,
+      densityGPerMl: "Infinity",
+    });
+
+    expect(result).toMatchObject({ ok: false, error: "invalid-input" });
+    expect((await findIngredientById(scopeA, alpha.ingredientId))?.densityGPerMl).toBe(0.53);
   });
 });

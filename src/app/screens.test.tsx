@@ -132,8 +132,8 @@ const DRAFT: ImportDraft = {
 };
 
 const PANTRY_ITEMS = [
-  { id: "4b6e1f0a-2c3d-4e5f-8a9b-0c1d2e3f4a5b", name: "Chickpeas", quantity: 500, unitId: "g", densityGPerMl: null },
-  { id: "5c7f2a1b-3d4e-4f60-9b0c-1d2e3f4a5b6c", name: "Plain flour", quantity: 1, unitId: "kg", densityGPerMl: 0.53 },
+  { id: "4b6e1f0a-2c3d-4e5f-8a9b-0c1d2e3f4a5b", ingredientId: "6d8a3b2c-4e5f-4a71-8c1d-2e3f4a5b6c7d", name: "Chickpeas", quantity: 500, unitId: "g", densityGPerMl: null },
+  { id: "5c7f2a1b-3d4e-4f60-9b0c-1d2e3f4a5b6c", ingredientId: "7e9b4c3d-5f60-4b82-9d2e-3f4a5b6c7d8e", name: "Plain flour", quantity: 1, unitId: "kg", densityGPerMl: 0.53 },
 ];
 
 const CREATED = new Date("2026-10-01T09:00:00Z");
@@ -536,5 +536,37 @@ describe("/recipes/[id]", () => {
   it("offers no Copy when there is nothing to buy", () => {
     expect(markupOf("/recipes/[id], nothing listed")).toContain("Nothing to buy.");
     expect(markupOf("/recipes/[id], nothing listed")).not.toMatch(/>Copy</);
+  });
+});
+
+describe("/pantry", () => {
+  const markup = markupOf("/pantry");
+  const inputs = openingTags(markup, ["input"]);
+
+  it("offers every row a density form naming that row's catalog entry", () => {
+    // The hidden id is the only thing that says which entry to change; the
+    // action re-reads it under the session's scope (SPEC.md §4).
+    const named = inputs
+      .filter(
+        (tag) => attribute(tag, "type") === "hidden" && attribute(tag, "name") === "ingredientId",
+      )
+      .map((tag) => attribute(tag, "value"));
+
+    expect(named).toEqual(PANTRY_ITEMS.map((item) => item.ingredientId));
+  });
+
+  it("starts each row's density from the one its entry already has", () => {
+    // Blank for an entry with none: blank is what clears it, so an empty field
+    // has to mean "none" both ways.
+    const densities = inputs
+      .filter((tag) => attribute(tag, "name") === "densityGPerMl")
+      .map((tag) => [attribute(tag, "id"), attribute(tag, "value")]);
+
+    expect(densities).toEqual(
+      PANTRY_ITEMS.map((item) => [
+        `${item.id}-density`,
+        item.densityGPerMl === null ? undefined : String(item.densityGPerMl),
+      ]),
+    );
   });
 });

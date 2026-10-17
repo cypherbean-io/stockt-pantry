@@ -1,11 +1,16 @@
 import "server-only";
 
-import { findIngredientById, findOrCreateIngredient } from "@/db/queries/ingredients";
+import {
+  findIngredientById,
+  findOrCreateIngredient,
+  setIngredientDensity,
+} from "@/db/queries/ingredients";
 import { deletePantryItem, setPantryEntry, setPantryQuantity } from "@/db/queries/pantry";
 import type { HouseholdScope } from "@/db/scope";
 import type { FieldErrors } from "@/lib/forms";
 
 import {
+  parseDensityUpdate,
   parsePantryAmount,
   parsePantryEntry,
   parsePantryItemId,
@@ -168,4 +173,27 @@ export async function removePantryItem(
   }
 
   return { ok: true, value: await deletePantryItem(scope, id.value) };
+}
+
+/**
+ * Set, correct or clear the density of an ingredient already in the catalog
+ * (blank clears it). It is offered from the pantry row because that is where
+ * it can matter: a line is only "can't verify" when the household holds some
+ * of the ingredient in the other dimension — with none on the shelf the line
+ * is simply missing.
+ *
+ * `false` means nothing matched, on the same terms as `removePantryItem`.
+ */
+export async function setPantryIngredientDensity(
+  scope: HouseholdScope,
+  input: { readonly ingredientId: unknown; readonly densityGPerMl: unknown },
+): Promise<PantryResult<boolean>> {
+  const parsed = parseDensityUpdate(input);
+  if (!parsed.ok) {
+    return { ok: false, error: "invalid-input", fieldErrors: parsed.errors };
+  }
+
+  const { ingredientId, densityGPerMl } = parsed.value;
+  const updated = await setIngredientDensity(scope, ingredientId, densityGPerMl);
+  return { ok: true, value: updated !== undefined };
 }

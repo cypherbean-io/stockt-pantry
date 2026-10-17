@@ -2,12 +2,16 @@
 
 import { useActionState } from "react";
 
-import { removePantryItemAction, updatePantryItemAction } from "@/app/actions/pantry";
+import {
+  removePantryItemAction,
+  setIngredientDensityAction,
+  updatePantryItemAction,
+} from "@/app/actions/pantry";
 import { FormMessage } from "@/app/_components/fields";
 import { Button } from "@/app/_components/ui/button";
 import { Card } from "@/app/_components/ui/card";
 
-import { AmountFields } from "./fields";
+import { AmountFields, DensityField } from "./fields";
 
 /**
  * One line of the pantry, with its amount editable in place.
@@ -16,10 +20,15 @@ import { AmountFields } from "./fields";
  * the server *which* row to act on — nothing else about the row is submitted.
  * The action re-reads it under the session's scope, so a hand-edited id reaches
  * a query that cannot see another household's rows (SPEC.md §4).
+ *
+ * The density form names the catalog entry rather than the row, because that
+ * is what it changes — every recipe line on that ingredient sees the new value.
+ * Its id is re-read under the scope the same way.
  */
 
 export type PantryListItem = {
   readonly id: string;
+  readonly ingredientId: string;
   readonly name: string;
   readonly quantity: number;
   readonly unitId: string;
@@ -29,6 +38,10 @@ export type PantryListItem = {
 export function PantryRow({ item }: { item: PantryListItem }) {
   const [updateState, update, saving] = useActionState(updatePantryItemAction, undefined);
   const [removeState, remove, removing] = useActionState(removePantryItemAction, undefined);
+  const [densityState, setDensity, settingDensity] = useActionState(
+    setIngredientDensityAction,
+    undefined,
+  );
 
   return (
     <Card as="li" className="flex flex-col gap-3">
@@ -80,6 +93,41 @@ export function PantryRow({ item }: { item: PantryListItem }) {
           </Button>
         </form>
       </div>
+
+      {/*
+        Behind a disclosure, as the recipe page's delete is: a density is set
+        once and rarely revisited, and three open forms per row would bury the
+        amount, which is the thing a row is mostly for. Saving remounts the row
+        (its key carries the density), which closes this again over the new
+        value; a rejected value leaves it open beside its error.
+      */}
+      <details className="rounded-card border border-border">
+        <summary
+          className={
+            "min-h-tap cursor-pointer rounded-card px-4 py-2.5 font-medium text-ink " +
+            "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+          }
+        >
+          Edit density
+        </summary>
+        <form
+          action={setDensity}
+          className="flex flex-col items-start gap-3 border-t border-border p-4"
+        >
+          <FormMessage state={densityState} />
+          <input type="hidden" name="ingredientId" value={item.ingredientId} />
+          <div className="w-full max-w-prose">
+            <DensityField
+              idPrefix={item.id}
+              defaultValue={item.densityGPerMl === null ? undefined : String(item.densityGPerMl)}
+              error={densityState?.fieldErrors?.densityGPerMl}
+            />
+          </div>
+          <Button type="submit" variant="secondary" disabled={settingDensity}>
+            {settingDensity ? "Saving…" : "Save density"}
+          </Button>
+        </form>
+      </details>
     </Card>
   );
 }

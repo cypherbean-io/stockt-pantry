@@ -42,13 +42,13 @@ export function PantryScreen({
               {items.map((item) => (
                 <PantryRow
                   /*
-                    Keyed on the amount as well as the id so that saving a change
-                    remounts the row's inputs. An uncontrolled input keeps whatever
-                    the user last typed even after its `defaultValue` changes, so
-                    without this the field can go on showing a value the row behind
-                    it no longer holds.
+                    Keyed on the amount and density as well as the id so that
+                    saving a change remounts the row's inputs. An uncontrolled
+                    input keeps whatever the user last typed even after its
+                    `defaultValue` changes, so without this the field can go on
+                    showing a value the row behind it no longer holds.
                   */
-                  key={`${item.id}:${item.quantity}:${item.unitId}`}
+                  key={`${item.id}:${item.quantity}:${item.unitId}:${item.densityGPerMl}`}
                   item={item}
                 />
               ))}

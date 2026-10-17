@@ -19,8 +19,9 @@ import { AmountFields, DensityField } from "./fields";
  *
  * The name and density inputs are only rendered when they apply — a hidden
  * field that still submits is how a density edit would sneak in against an
- * existing entry, which v1 does not have a surface for (SPEC.md §2, Out). The
- * parser ignores them on that branch regardless; this keeps the two agreeing.
+ * existing entry, which has its own deliberate form on the entry's pantry row.
+ * The parser ignores them on that branch regardless; this keeps the two
+ * agreeing.
  *
  * Two columns from `sm` up: the ingredient on a row of its own, then the new
  * entry's name beside its density, then the amount beside its unit — each
