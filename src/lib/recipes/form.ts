@@ -303,6 +303,66 @@ export function parseRecipeForm(data: FormData): ParsedRecipe {
 }
 
 /**
+ * The form's own fields, as the strings its inputs hold. What the edit page
+ * pre-fills, and what `parseRecipeForm` reads back.
+ */
+export type RecipeFormValues = {
+  readonly name: string;
+  readonly baseServings: string;
+  /** Newline-separated, matching the steps textarea. */
+  readonly steps: string;
+  readonly lines: readonly {
+    readonly name: string;
+    readonly quantity: string;
+    readonly unitId: string;
+  }[];
+};
+
+/**
+ * The columns `recipeFormValues` needs. Structural rather than Drizzle's row
+ * types, as in `matching/from-storage.ts`: a `RecipeWithLines` satisfies it by
+ * having the fields, and this module stays testable with nothing installed.
+ */
+export type StoredRecipeForForm = {
+  readonly name: string;
+  readonly baseServings: number;
+  readonly steps: readonly string[];
+  readonly lines: readonly {
+    readonly line: { readonly quantity: number; readonly unitId: string };
+    readonly ingredient: { readonly name: string };
+  }[];
+};
+
+/**
+ * A stored recipe as the form's starting values — the inverse of
+ * `parseRecipeForm`, so saving an untouched edit form writes back what was
+ * already there.
+ *
+ * Quantities are written out with `String`, which round-trips through
+ * `Number` exactly. The import review rounds to four places because a parsed
+ * `1/3` would otherwise fill the box; rounding a *stored* amount here would
+ * make an edit to the name quietly rewrite every quantity too.
+ *
+ * Densities are not carried. In the form a density only applies when a name
+ * turns out to be a new catalog entry, and every stored line already has one —
+ * pre-filling it would suggest that changing it here changes the entry.
+ */
+export function recipeFormValues(stored: StoredRecipeForForm): RecipeFormValues {
+  return {
+    name: stored.name,
+    baseServings: String(stored.baseServings),
+    // Stored steps cannot contain a newline — `parseSteps` split on them and
+    // rejected every other control character — so joining is lossless.
+    steps: stored.steps.join("\n"),
+    lines: stored.lines.map(({ line, ingredient }) => ({
+      name: ingredient.name,
+      quantity: String(line.quantity),
+      unitId: line.unitId,
+    })),
+  };
+}
+
+/**
  * The serving count from `?servings=`.
  *
  * A URL someone typed by hand is not worth a 500, so anything unusable falls

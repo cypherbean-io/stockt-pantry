@@ -1,7 +1,7 @@
 import type { ReactElement } from "react";
 
 import { MatchTable, ShoppingList } from "@/app/_components/match";
-import { Button } from "@/app/_components/ui/button";
+import { Button, LinkButton } from "@/app/_components/ui/button";
 import { controlClass, describedBy, Field } from "@/app/_components/ui/field";
 import { PageHeader } from "@/app/_components/ui/page-header";
 import { Section } from "@/app/_components/ui/section";
@@ -50,6 +50,11 @@ export function RecipeScreen({
             // would otherwise push a phone's viewport sideways.
             <span className="text-sm wrap-anywhere">Imported from {recipe.sourceUrl}</span>
           )
+        }
+        action={
+          <LinkButton href={`/recipes/${recipe.id}/edit`} variant="secondary" size="sm">
+            Edit recipe
+          </LinkButton>
         }
       />
 

@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 
 import { requireScope } from "@/lib/auth/session";
 import { parseRecipeForm, type RecipeFieldErrors } from "@/lib/recipes/form";
-import { removeRecipe, saveRecipeDraft } from "@/lib/recipes/service";
+import { removeRecipe, saveRecipeDraft, updateRecipeDraft } from "@/lib/recipes/service";
 
 /**
  * Server actions for recipe management.
@@ -40,6 +40,36 @@ export async function createRecipeAction(
   }
 
   // `redirect` throws, so it must stay outside anything that catches.
+  redirect(`/recipes/${saved.id}`);
+}
+
+/**
+ * Save an edit over one of the caller's own recipes.
+ *
+ * The recipe id is a hidden form field, so it is request input like any other,
+ * as it is for delete: it only ever reaches a scoped lookup and a scoped
+ * update, which refuse another household's recipe exactly as they refuse one
+ * that does not exist. The submission is parsed by the same `parseRecipeForm`
+ * as a new recipe, because it is the same form.
+ */
+export async function updateRecipeAction(
+  _state: RecipeFormState,
+  formData: FormData,
+): Promise<RecipeFormState> {
+  const scope = await requireScope();
+
+  const parsed = parseRecipeForm(formData);
+  if (!parsed.ok) {
+    return { message: parsed.message, fieldErrors: parsed.fieldErrors };
+  }
+
+  const saved = await updateRecipeDraft(scope, formData.get("recipeId"), parsed.value);
+  if (!saved.ok) {
+    return { message: saved.message };
+  }
+
+  // The recipe page reads the session cookie, so it is dynamic and rendered
+  // fresh: the redirect alone is enough to show the saved version.
   redirect(`/recipes/${saved.id}`);
 }
 

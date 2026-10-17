@@ -8,6 +8,7 @@ import {
   MIN_DENSITY,
   parseRecipeForm,
   parseServings,
+  recipeFormValues,
 } from "./form";
 
 /**
@@ -298,5 +299,79 @@ describe("parseRecipeForm, source URL", () => {
 
     expect(submitted.length).toBeLessThan(MAX_URL_LENGTH);
     expect(errorFor(complete({ sourceUrl: submitted }), "sourceUrl")).toBeDefined();
+  });
+});
+
+describe("recipeFormValues", () => {
+  /**
+   * The edit form starts from what is stored, and what it posts back goes
+   * through `parseRecipeForm` like any other submission. So the one property
+   * worth having is that saving an untouched form changes nothing: every
+   * value has to come back out of the parser exactly as it went in.
+   */
+
+  const STORED = {
+    name: "Chocolate chip cookies",
+    baseServings: 24,
+    steps: ["Cream the butter", "Fold in the flour"],
+    lines: [
+      { line: { quantity: 0.3333, unitId: "cup" }, ingredient: { name: "Brown sugar" } },
+      { line: { quantity: 300, unitId: "g" }, ingredient: { name: "Flour" } },
+    ],
+  };
+
+  /** What the edit form submits when the user changes nothing. */
+  function submitted(values: ReturnType<typeof recipeFormValues>): FormData {
+    return form({
+      name: values.name,
+      baseServings: values.baseServings,
+      steps: values.steps,
+      ingredientName: values.lines.map((line) => line.name),
+      ingredientQuantity: values.lines.map((line) => line.quantity),
+      ingredientUnit: values.lines.map((line) => line.unitId),
+      ingredientDensity: values.lines.map(() => ""),
+    });
+  }
+
+  it("writes a stored recipe out as the form's own strings", () => {
+    expect(recipeFormValues(STORED)).toEqual({
+      name: "Chocolate chip cookies",
+      baseServings: "24",
+      steps: "Cream the butter\nFold in the flour",
+      lines: [
+        { name: "Brown sugar", quantity: "0.3333", unitId: "cup" },
+        { name: "Flour", quantity: "300", unitId: "g" },
+      ],
+    });
+  });
+
+  it("survives a save with nothing changed", () => {
+    const parsed = parseRecipeForm(submitted(recipeFormValues(STORED)));
+
+    expect(parsed.ok && parsed.value).toEqual({
+      name: STORED.name,
+      baseServings: STORED.baseServings,
+      steps: STORED.steps,
+      lines: STORED.lines.map(({ line, ingredient }) => ({
+        name: ingredient.name,
+        quantity: line.quantity,
+        unitId: line.unitId,
+      })),
+    });
+  });
+
+  it("keeps a quantity exactly rather than rounding it for display", () => {
+    // Rounding here would make an untouched save rewrite the stored amount.
+    const values = recipeFormValues({
+      ...STORED,
+      lines: [{ line: { quantity: 1 / 3, unitId: "cup" }, ingredient: { name: "Milk" } }],
+    });
+    const parsed = parseRecipeForm(submitted(values));
+
+    expect(parsed.ok && parsed.value.lines[0]?.quantity).toBe(1 / 3);
+  });
+
+  it("leaves the steps box empty for a recipe with no steps", () => {
+    expect(recipeFormValues({ ...STORED, steps: [] }).steps).toBe("");
   });
 });

@@ -2,7 +2,7 @@
 
 import { useActionState, useRef, useState } from "react";
 
-import { createRecipeAction } from "@/app/actions/recipes";
+import { createRecipeAction, updateRecipeAction } from "@/app/actions/recipes";
 import { HalfCircleIcon, PlusIcon } from "@/app/_components/icons";
 import { Button } from "@/app/_components/ui/button";
 import { Card } from "@/app/_components/ui/card";
@@ -16,16 +16,18 @@ import {
 import { Section } from "@/app/_components/ui/section";
 import { UNITS } from "@/lib/matching/units";
 import type { ImportDraft } from "@/lib/recipes/import-draft";
-import { MAX_SERVINGS } from "@/lib/recipes/form";
+import { MAX_SERVINGS, type RecipeFormValues } from "@/lib/recipes/form";
 
 /**
- * The recipe form, shared by manual entry (`/recipes/new`) and by the
- * review-and-confirm step of a URL import (`/recipes/import`).
+ * The recipe form, shared by manual entry (`/recipes/new`), by the
+ * review-and-confirm step of a URL import (`/recipes/import`), and by editing
+ * a saved recipe (`/recipes/[id]/edit`).
  *
- * One component for both because they are the same form: an import's review
- * screen is this, pre-filled from a parsed page and annotated with what the
- * parser was unsure about. `initial` is what makes it the second one; without
- * it the form starts empty.
+ * One component for all three because they are the same form: an import's
+ * review screen is this, pre-filled from a parsed page and annotated with what
+ * the parser was unsure about, and the edit screen is this pre-filled from the
+ * stored recipe and saved back over it. `initial` makes it the second,
+ * `editing` the third; with neither the form starts empty.
  *
  * The ingredient rows are repeated inputs of the same four names, so the server
  * reads them with `getAll` and pairs them by position. That only holds if every
@@ -35,9 +37,10 @@ import { MAX_SERVINGS } from "@/lib/recipes/form";
  *
  * The inputs are controlled rather than uncontrolled: React resets a form after
  * its action runs, and a validation error that emptied a half-written recipe
- * would be worse than the error. That also means the seed from `initial` is
- * read once, at mount — the import page gives this component a `key` per import
- * so a second one starts over rather than merging into the first.
+ * would be worse than the error. That also means the seed from `initial` or
+ * `editing` is read once, at mount — the import page gives this component a
+ * `key` per import so a second one starts over rather than merging into the
+ * first.
  */
 
 const UNIT_OPTIONS = Object.entries(UNITS).map(([id, unit]) => ({ id, label: unit.name }));
@@ -80,6 +83,21 @@ function draftRows(draft: ImportDraft): readonly Row[] {
 }
 
 /**
+ * A saved recipe's lines, as form rows. No `raw` and no warning: these were
+ * confirmed once already, and the density stays blank — see
+ * `recipeFormValues` for why.
+ */
+function storedRows(values: RecipeFormValues): readonly Row[] {
+  return values.lines.map((line, key) => ({
+    key,
+    name: line.name,
+    quantity: line.quantity,
+    unitId: line.unitId,
+    density: "",
+  }));
+}
+
+/**
  * What the import review flags for a second look. `--status-warn` with its own
  * ink, because it is the "check this" colour everywhere else in the app, and
  * the half-circle glyph beside it so the colour is not carrying it alone
@@ -91,18 +109,29 @@ const WARNING =
 export function RecipeForm({
   catalog,
   initial,
+  editing,
 }: {
   catalog: readonly string[];
   /** Present on the import review screen; absent for manual entry. */
   initial?: ImportDraft;
+  /** Present on the edit screen: the recipe to save over, and its stored values. */
+  editing?: { readonly recipeId: string; readonly values: RecipeFormValues };
 }) {
-  const [state, action, pending] = useActionState(createRecipeAction, undefined);
+  const [state, action, pending] = useActionState(
+    editing === undefined ? createRecipeAction : updateRecipeAction,
+    undefined,
+  );
 
-  const [name, setName] = useState(initial?.name ?? "");
-  const [baseServings, setBaseServings] = useState(initial?.baseServings ?? "4");
-  const [steps, setSteps] = useState(initial?.steps ?? "");
+  const seed = editing?.values ?? initial;
+  const [name, setName] = useState(seed?.name ?? "");
+  const [baseServings, setBaseServings] = useState(seed?.baseServings ?? "4");
+  const [steps, setSteps] = useState(seed?.steps ?? "");
   const [rows, setRows] = useState<readonly Row[]>(() =>
-    initial === undefined ? [blankRow(0), blankRow(1)] : draftRows(initial),
+    editing !== undefined
+      ? storedRows(editing.values)
+      : initial !== undefined
+        ? draftRows(initial)
+        : [blankRow(0), blankRow(1)],
   );
   const nextKey = useRef(rows.length);
 
@@ -130,6 +159,11 @@ export function RecipeForm({
           (SPEC.md §3). Hidden, so it is request input by the time it comes back
           — `parseRecipeForm` re-checks the scheme rather than trusting it. */}
       {initial !== undefined && <input type="hidden" name="sourceUrl" value={initial.sourceUrl} />}
+      {/* The recipe an edit saves over. Request input like the source above:
+          the action only hands it to scoped queries, as delete does. No source
+          link is posted alongside it — an edit cannot change where a recipe
+          came from. */}
+      {editing !== undefined && <input type="hidden" name="recipeId" value={editing.recipeId} />}
       {/* A form-level message: the field it is about is hidden, so there is
           nothing on screen to put it beside. */}
       <FormMessage message={errorFor("sourceUrl")} />
@@ -335,7 +369,7 @@ export function RecipeForm({
       </Section>
 
       <Button type="submit" disabled={pending} className="self-start">
-        {pending ? "Saving…" : "Save recipe"}
+        {pending ? "Saving…" : editing === undefined ? "Save recipe" : "Save changes"}
       </Button>
     </form>
   );

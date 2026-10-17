@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { ingredient, invite, pantryItem, recipe, recipeIngredient, session, user } from "./schema";
@@ -29,6 +29,7 @@ import {
   findRecipeWithLines,
   listRecipes,
   listRecipesWithLines,
+  updateRecipe,
 } from "./queries/recipes";
 import { resetDatabase, seedHousehold, testDb, type SeededHousehold } from "./testing/harness";
 
@@ -417,6 +418,141 @@ describe("recipes", () => {
     expect(saved.householdId).toBe(alpha.householdId);
     expect(saved.ingredients.map((line) => line.householdId)).toEqual([alpha.householdId]);
     expect(await findRecipeById(scopeB, saved.id)).toBeUndefined();
+  });
+
+  /** An edit that would be valid on Alpha's own recipe. */
+  const EDIT = {
+    name: "Rewritten",
+    baseServings: 8,
+    steps: ["Knead"],
+  };
+
+  it("does not update another household's recipe or its lines", async () => {
+    const updated = await updateRecipe(scopeA, beta.recipeId, {
+      ...EDIT,
+      ingredients: [{ ingredientId: alpha.ingredientId, quantity: 1, unitId: "g" }],
+    });
+
+    expect(updated).toBeUndefined();
+    const untouched = await findRecipeWithLines(scopeB, beta.recipeId);
+    expect(untouched?.name).toBe("Beta bread");
+    expect(untouched?.baseServings).toBe(4);
+    expect(untouched?.steps).toEqual(["Mix", "Bake"]);
+    // Replacing the lines starts by deleting them, and that delete is scoped
+    // too — "the recipe update matched nothing" is not what protects them.
+    expect(untouched?.lines.map((row) => [row.line.ingredientId, row.line.quantity])).toEqual([
+      [beta.ingredientId, 300],
+    ]);
+  });
+
+  it("does not empty another household's recipe of its lines", async () => {
+    expect(await updateRecipe(scopeA, beta.recipeId, { ...EDIT, ingredients: [] })).toBeUndefined();
+    expect((await findRecipeWithLines(scopeB, beta.recipeId))?.lines).toHaveLength(1);
+  });
+
+  it("treats a malformed recipe id as one this household does not have, when updating", async () => {
+    expect(
+      await updateRecipe(scopeA, "'; drop table recipe; --", { ...EDIT, ingredients: [] }),
+    ).toBeUndefined();
+    expect((await findRecipeById(scopeA, alpha.recipeId))?.name).toBe("Alpha bread");
+  });
+
+  it("updates its own recipe and stamps the replacement lines with the scope's household", async () => {
+    const updated = await updateRecipe(scopeA, alpha.recipeId, {
+      ...EDIT,
+      ingredients: [{ ingredientId: alpha.ingredientId, quantity: 450, unitId: "g" }],
+    });
+
+    expect(updated?.name).toBe("Rewritten");
+    expect(updated?.ingredients.map((line) => line.householdId)).toEqual([alpha.householdId]);
+    const found = await findRecipeWithLines(scopeA, alpha.recipeId);
+    expect(found?.lines.map((row) => row.line.quantity)).toEqual([450]);
+  });
+
+  it("cannot point its own recipe's line at another household's ingredient", async () => {
+    await expect(
+      updateRecipe(scopeA, alpha.recipeId, {
+        ...EDIT,
+        ingredients: [{ ingredientId: beta.ingredientId, quantity: 1, unitId: "g" }],
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("leaves a recipe exactly as it was when its replacement lines are rejected", async () => {
+    // The row update and the line swap are one transaction. If they were not,
+    // a rejected line would leave the new name over an empty ingredient list.
+    await updateRecipe(scopeA, alpha.recipeId, {
+      ...EDIT,
+      ingredients: [{ ingredientId: beta.ingredientId, quantity: 1, unitId: "g" }],
+    }).catch(() => undefined);
+
+    const found = await findRecipeWithLines(scopeA, alpha.recipeId);
+    expect(found?.name).toBe("Alpha bread");
+    expect(found?.lines.map((row) => [row.line.ingredientId, row.line.quantity])).toEqual([
+      [alpha.ingredientId, 300],
+    ]);
+  });
+
+  it("does not carry the statement or its parameters out of findRecipeById", async () => {
+    // `updateRecipeDraft` logs whatever escapes this. The id's shape is
+    // checked first, so the scope is the only way left to provoke a driver
+    // error (SQLSTATE 22P02) — hence the cast, as in the household tests.
+    const marker = "DIGEST-MARKER-NOT-A-UUID";
+    const message = await findRecipeById(
+      { householdId: marker } as unknown as HouseholdScope,
+      alpha.recipeId,
+    ).then(
+      () => "resolved",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+
+    expect(message).not.toContain(marker);
+    expect(message).not.toContain(alpha.recipeId);
+    expect(message).not.toContain("params:");
+    expect(message).not.toContain("Failed query");
+    expect(message).toContain("22P02");
+  });
+
+  it("does not carry the statement or its parameters out of a recipe's lines", async () => {
+    // `/recipes/[id]/edit` reaches this join through `findRecipeWithLines`,
+    // and whatever escapes a page is printed by Next's default handler. It
+    // binds the same values as `findRecipeById`, which runs first, so no
+    // argument fails one without the other. Hiding the one table only the
+    // join reads does: Postgres re-analyses a prepared statement after DDL,
+    // so even a cached plan fails with SQLSTATE 42P01. The `db` project runs
+    // its files one at a time, which is what makes renaming a table safe.
+    await db.execute(sql`alter table ${ingredient} rename to ingredient_hidden`);
+    const message = await findRecipeWithLines(scopeA, alpha.recipeId)
+      .then(
+        () => "resolved",
+        (error: unknown) => (error instanceof Error ? error.message : String(error)),
+      )
+      .finally(() => db.execute(sql`alter table ingredient_hidden rename to ${ingredient}`));
+
+    expect(message).not.toContain(alpha.recipeId);
+    expect(message).not.toContain("params:");
+    expect(message).not.toContain("Failed query");
+    expect(message).toContain("42P01");
+  });
+
+  it("does not carry the statement or its parameters out of updateRecipe", async () => {
+    // The recipe's contents are bound into this statement, which is exactly
+    // what SPEC.md §4 keeps out of the logs.
+    const marker = "DIGEST-MARKER-RECIPE-NAME";
+    const message = await updateRecipe(scopeA, alpha.recipeId, {
+      ...EDIT,
+      name: marker,
+      ingredients: [{ ingredientId: beta.ingredientId, quantity: 1, unitId: "g" }],
+    }).then(
+      () => "resolved",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+
+    expect(message).not.toContain(marker);
+    expect(message).not.toContain("params:");
+    expect(message).not.toContain("Failed query");
+    expect(message).toContain(FOREIGN_KEY_VIOLATION);
+    expect(message).toContain("recipe_ingredient_household_ingredient_fk");
   });
 });
 
