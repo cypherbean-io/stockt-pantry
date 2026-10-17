@@ -1,16 +1,23 @@
+import { sql } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { invite, session, user } from "./schema";
-import { scopeForSession } from "./scope";
+import { scopeForSession, unsafeHouseholdScopeFromId } from "./scope";
+import { listMembers } from "./queries/household";
 import { listInvites } from "./queries/invites";
 import { resetDatabase, testDb } from "./testing/harness";
 import {
   authenticate,
+  inviteIsOpen,
   issueInvite,
   joinWithInvite,
   logIn,
   logOut,
+  removeMember,
+  revokeInvite,
   signUpHousehold,
+  type AuthResult,
+  type IssuedSession,
 } from "@/lib/auth/service";
 import type { AuthEnv } from "@/lib/auth/env";
 import { hashToken } from "@/lib/auth/token";
@@ -352,6 +359,210 @@ describe("invites", () => {
     const [row] = await listInvites(scope);
     expect(row?.householdId).toBe(owner.householdId);
     expect(row?.createdBy).toBe(owner.userId);
+  });
+});
+
+function scopeOf(member: { readonly householdId: string }) {
+  return unsafeHouseholdScopeFromId(member.householdId);
+}
+
+function issued<T>(result: AuthResult<T>): T {
+  if (!result.ok) throw new Error(`expected success, got ${result.error}`);
+  return result.value;
+}
+
+/** A second member of `owner`'s household, joined through an invite `owner` issued. */
+async function inviteMember(
+  owner: { readonly userId: string; readonly householdId: string },
+  email: string,
+): Promise<IssuedSession> {
+  const { token } = await issueInvite(scopeOf(owner), owner.userId, { now: T0 });
+  return issued(
+    await joinWithInvite({ inviteToken: token, email, password: PASSWORD }, { now: T0 }),
+  );
+}
+
+describe("removing a member", () => {
+  it("signs the removed member out on every device", async () => {
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const second = await inviteMember(owner, "second@alpha.example");
+    const otherDevice = issued(
+      await logIn({ email: "second@alpha.example", password: PASSWORD }, { now: T0 }),
+    );
+
+    expect(await removeMember(scopeOf(owner), owner.userId, second.userId)).toBe(true);
+
+    expect(await authenticate(second.token, { now: T0 })).toBeUndefined();
+    expect(await authenticate(otherDevice.token, { now: T0 })).toBeUndefined();
+  });
+
+  it("deletes the removed member's account and leaves everyone else's", async () => {
+    // A user belongs to exactly one household, so there is nowhere else for
+    // the account to go. Inviting them again is how they come back.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const second = await inviteMember(owner, "second@alpha.example");
+
+    await removeMember(scopeOf(owner), owner.userId, second.userId);
+
+    expect(
+      await logIn({ email: "second@alpha.example", password: PASSWORD }, { now: T0 }),
+    ).toEqual({ ok: false, error: "invalid-credentials" });
+    expect((await listMembers(scopeOf(owner))).map((row) => row.id)).toEqual([owner.userId]);
+    expect(await authenticate(owner.token, { now: T0 })).toBeDefined();
+  });
+
+  it("stops the invites the removed member issued from letting anyone in", async () => {
+    // Otherwise removing someone would leave behind a link they could hand to
+    // anyone, themselves included.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const second = await inviteMember(owner, "second@alpha.example");
+    const { token } = await issueInvite(scopeOf(owner), second.userId, { now: T0 });
+
+    await removeMember(scopeOf(owner), owner.userId, second.userId);
+
+    expect(await inviteIsOpen(token, { now: T0 })).toBe(false);
+  });
+
+  it("refuses to remove the member who is asking", async () => {
+    // Leaving a household is deleting your own account, which is not this
+    // feature.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    await inviteMember(owner, "second@alpha.example");
+
+    expect(await removeMember(scopeOf(owner), owner.userId, owner.userId)).toBe(false);
+    expect(await authenticate(owner.token, { now: T0 })).toBeDefined();
+  });
+
+  it("refuses to remove the member who is asking when their id arrives upper-cased", async () => {
+    // A uuid is case-insensitive to Postgres but not to `!==`, so a hand-edited
+    // form could otherwise spell the caller's own id past a check in JS.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    await inviteMember(owner, "second@alpha.example");
+
+    expect(
+      await removeMember(scopeOf(owner), owner.userId, owner.userId.toUpperCase()),
+    ).toBe(false);
+    expect(await authenticate(owner.token, { now: T0 })).toBeDefined();
+  });
+
+  it("refuses to remove a member who joined before the one asking", async () => {
+    // Seniority is what stops a leaked invite from handing over the household:
+    // whoever arrives through it can remove nobody who was there first, and the
+    // longest-standing member can never be removed at all.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const second = await inviteMember(owner, "second@alpha.example");
+
+    expect(await removeMember(scopeOf(owner), second.userId, owner.userId)).toBe(false);
+    expect(await authenticate(owner.token, { now: T0 })).toBeDefined();
+  });
+
+  it("ranks members who joined in the same millisecond by Postgres's clock, not JavaScript's", async () => {
+    // `created_at` holds microseconds and a JS `Date` holds milliseconds. A
+    // comparison that round-tripped through JS would round the later member
+    // down to the earlier one's millisecond and let them remove someone who
+    // was there first.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const rows = await db
+      .insert(user)
+      .values(
+        [
+          ["earlier@alpha.example", "2030-01-01T00:00:00.000100Z"],
+          ["later@alpha.example", "2030-01-01T00:00:00.000900Z"],
+        ].map(([email, joined]) => ({
+          email: email!,
+          // Not a credential: nothing signs in as these two.
+          passwordHash: "placeholder-not-a-real-hash",
+          householdId: owner.householdId,
+          createdAt: sql`${joined}::timestamptz`,
+        })),
+      )
+      .returning({ id: user.id, email: user.email });
+    const earlier = rows.find((row) => row.email === "earlier@alpha.example")!;
+    const later = rows.find((row) => row.email === "later@alpha.example")!;
+
+    expect(await removeMember(scopeOf(owner), later.id, earlier.id)).toBe(false);
+    expect(await removeMember(scopeOf(owner), earlier.id, later.id)).toBe(true);
+  });
+
+  it("refuses a removal asked for by a member who has already been removed", async () => {
+    // Their request can be in flight past its session check when the removal
+    // lands, so the query asks again rather than trusting that check. Three
+    // members, so the one removed was senior to the one they then try to
+    // remove, and seniority alone would not refuse it.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const second = await inviteMember(owner, "second@alpha.example");
+    const third = await inviteMember(owner, "third@alpha.example");
+    await removeMember(scopeOf(owner), owner.userId, second.userId);
+
+    expect(await removeMember(scopeOf(owner), second.userId, third.userId)).toBe(false);
+    expect((await listMembers(scopeOf(owner))).map((row) => row.id)).toEqual([
+      owner.userId,
+      third.userId,
+    ]);
+  });
+
+  it.each([
+    ["a malformed id", "not-a-uuid"],
+    ["a missing field", null],
+  ])("answers false, without throwing, for %s", async (_label, memberId) => {
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    await inviteMember(owner, "second@alpha.example");
+
+    expect(await removeMember(scopeOf(owner), owner.userId, memberId)).toBe(false);
+    expect(await listMembers(scopeOf(owner))).toHaveLength(2);
+  });
+});
+
+describe("revoking an invite", () => {
+  it("stops an open invite from being redeemed", async () => {
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const { token, inviteId } = await issueInvite(scopeOf(owner), owner.userId, { now: T0 });
+
+    expect(await revokeInvite(scopeOf(owner), inviteId)).toBe(true);
+
+    expect(
+      await joinWithInvite(
+        { inviteToken: token, email: "second@alpha.example", password: PASSWORD },
+        { now: after(1) },
+      ),
+    ).toEqual({ ok: false, error: "invite-invalid" });
+  });
+
+  it("takes a revoked invite off the household's list", async () => {
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const { inviteId } = await issueInvite(scopeOf(owner), owner.userId, { now: T0 });
+
+    await revokeInvite(scopeOf(owner), inviteId);
+
+    expect((await listInvites(scopeOf(owner))).map((row) => row.id)).not.toContain(inviteId);
+  });
+
+  it("leaves an invite that has already been used on the record", async () => {
+    // Revoking it would not un-join anyone; removing the member does that.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const { token, inviteId } = await issueInvite(scopeOf(owner), owner.userId, { now: T0 });
+    issued(
+      await joinWithInvite(
+        { inviteToken: token, email: "second@alpha.example", password: PASSWORD },
+        { now: after(1) },
+      ),
+    );
+
+    expect(await revokeInvite(scopeOf(owner), inviteId)).toBe(false);
+    expect((await listInvites(scopeOf(owner))).find((row) => row.id === inviteId)?.status).toBe(
+      "used",
+    );
+  });
+
+  it.each([
+    ["a malformed id", "not-a-uuid"],
+    ["a missing field", null],
+  ])("answers false, without throwing, for %s", async (_label, inviteId) => {
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    await issueInvite(scopeOf(owner), owner.userId, { now: T0 });
+
+    expect(await revokeInvite(scopeOf(owner), inviteId)).toBe(false);
+    expect(await listInvites(scopeOf(owner))).toHaveLength(1);
   });
 });
 
