@@ -131,6 +131,20 @@ const DRAFT: ImportDraft = {
   ],
 };
 
+/** An existing recipe's own values, as the edit page hands them to the form. */
+const EDITING = {
+  recipeId: RECIPE.id,
+  values: {
+    name: "Chana masala",
+    baseServings: "4",
+    steps: "Fry the onion until soft.\nAdd the spices.",
+    lines: [
+      { name: "Chickpeas", quantity: "240", unitId: "g" },
+      { name: "Coriander", quantity: "0.5", unitId: "count" },
+    ],
+  },
+};
+
 const PANTRY_ITEMS = [
   { id: "4b6e1f0a-2c3d-4e5f-8a9b-0c1d2e3f4a5b", ingredientId: "6d8a3b2c-4e5f-4a71-8c1d-2e3f4a5b6c7d", name: "Chickpeas", quantity: 500, unitId: "g", densityGPerMl: null },
   { id: "5c7f2a1b-3d4e-4f60-9b0c-1d2e3f4a5b6c", ingredientId: "7e9b4c3d-5f60-4b82-9d2e-3f4a5b6c7d8e", name: "Plain flour", quantity: 1, unitId: "kg", densityGPerMl: 0.53 },
@@ -168,6 +182,7 @@ const SCREENS: ReadonlyArray<readonly [string, ReactElement]> = [
   ["/recipes/new form", <RecipeForm key="new" catalog={CATALOG} />],
   ["/recipes/import form", <ImportFlow key="import" catalog={CATALOG} />],
   ["/recipes/import review", <RecipeForm key="review" catalog={CATALOG} initial={DRAFT} />],
+  ["/recipes/[id]/edit form", <RecipeForm key="edit" catalog={CATALOG} editing={EDITING} />],
   ["/recipes/[id]", <RecipeScreen key="recipe" recipe={RECIPE} servings={4} result={RESULT} />],
   [
     "/recipes/[id], nothing listed",
@@ -537,6 +552,65 @@ describe("/recipes/[id]", () => {
     expect(markupOf("/recipes/[id], nothing listed")).toContain("Nothing to buy.");
     expect(markupOf("/recipes/[id], nothing listed")).not.toMatch(/>Copy</);
   });
+
+  it("links to its own edit page", () => {
+    const links = openingTags(markupOf("/recipes/[id]"), ["a"]).map((tag) => attribute(tag, "href"));
+
+    expect(links).toContain(`/recipes/${RECIPE.id}/edit`);
+  });
+});
+
+describe("/recipes/[id]/edit", () => {
+  const markup = markupOf("/recipes/[id]/edit form");
+  const inputs = openingTags(markup, ["input"]);
+  const valueOf = (name: string) =>
+    inputs.filter((tag) => attribute(tag, "name") === name).map((tag) => attribute(tag, "value"));
+
+  it("names the recipe it saves over", () => {
+    // The only thing that says which recipe to change; the action re-reads it
+    // under the session's scope (SPEC.md §4), as it does for delete.
+    expect(valueOf("recipeId")).toEqual([RECIPE.id]);
+  });
+
+  it("starts from the recipe's own name, servings and steps", () => {
+    expect(valueOf("name")).toEqual([EDITING.values.name]);
+    expect(valueOf("baseServings")).toEqual([EDITING.values.baseServings]);
+    expect(markup).toContain(`>${EDITING.values.steps}</textarea>`);
+  });
+
+  it("starts from the recipe's own ingredient lines", () => {
+    expect(valueOf("ingredientName")).toEqual(EDITING.values.lines.map((line) => line.name));
+    expect(valueOf("ingredientQuantity")).toEqual(EDITING.values.lines.map((line) => line.quantity));
+    const selected = [...markup.matchAll(/<option value="([^"]*)" selected="">/g)].map(
+      (match) => match[1],
+    );
+    expect(selected).toEqual(EDITING.values.lines.map((line) => line.unitId));
+  });
+
+  it("leaves each line's density blank, since it only applies to a new catalog entry", () => {
+    // Pre-filling the entry's own density would suggest that changing it here
+    // changes the entry. It does not; that is the pantry row's density form.
+    // Controlled inputs, so blank renders as `value=""` rather than no attribute.
+    expect(valueOf("ingredientDensity")).toEqual(EDITING.values.lines.map(() => ""));
+  });
+
+  it("posts no source link, so an edit cannot rewrite where a recipe came from", () => {
+    expect(valueOf("sourceUrl")).toEqual([]);
+  });
+
+  it("says it saves changes rather than adding a recipe", () => {
+    expect(markup).toMatch(/<button[^>]*type="submit"[^>]*>Save changes<\/button>/);
+  });
+
+  it.each(["/recipes/new form", "/recipes/import review"])(
+    "names no recipe to save over on %s",
+    (screen) => {
+      const named = openingTags(markupOf(screen), ["input"]).filter(
+        (tag) => attribute(tag, "name") === "recipeId",
+      );
+      expect(named).toEqual([]);
+    },
+  );
 });
 
 describe("/pantry", () => {

@@ -1,7 +1,13 @@
 import "server-only";
 
 import { findOrCreateIngredient, listIngredients } from "@/db/queries/ingredients";
-import { createRecipe, deleteRecipe } from "@/db/queries/recipes";
+import {
+  createRecipe,
+  deleteRecipe,
+  findRecipeById,
+  updateRecipe,
+  type NewRecipeLine,
+} from "@/db/queries/recipes";
 import type { HouseholdScope } from "@/db/scope";
 import {
   describeFailure,
@@ -11,11 +17,12 @@ import {
 } from "@/lib/import/fetch-page";
 import { describeExtractFailure, extractRecipe } from "@/lib/import/jsonld";
 
-import { MAX_URL_LENGTH, type RecipeDraft } from "./form";
+import { MAX_URL_LENGTH, type DraftLine, type RecipeDraft } from "./form";
 import { buildImportDraft, type ImportDraft } from "./import-draft";
 
 /**
- * The recipe flows: import from a URL, save a confirmed recipe, delete one.
+ * The recipe flows: import from a URL, save a confirmed recipe, save an edit
+ * over one, delete one.
  *
  * Nothing here touches `next/headers`, for the same reason `pantry/service.ts`
  * does not: each flow takes a `HouseholdScope` and returns a result, which is
@@ -37,11 +44,12 @@ export type SaveResult =
 
 /**
  * Safe to log only because every query these flows call — `createRecipe`,
- * `findOrCreateIngredient`, `deleteRecipe` — routes its driver errors through
- * `src/db/redact.ts` first, so what arrives carries the SQLSTATE and constraint
- * name and nothing else. The unredacted message quotes the bound parameters,
- * which here are the whole recipe; SPEC.md §4 keeps that out of the logs. A new
- * query called from here has to be guarded the same way before it lands in this.
+ * `findRecipeById`, `updateRecipe`, `findOrCreateIngredient`, `deleteRecipe` —
+ * routes its driver errors through `src/db/redact.ts` first, so what arrives
+ * carries the SQLSTATE and constraint name and nothing else. The unredacted
+ * message quotes the bound parameters, which here are the whole recipe;
+ * SPEC.md §4 keeps that out of the logs. A new query called from here has to be
+ * guarded the same way before it lands in this.
  */
 function reportFailure(what: string, error: unknown): void {
   console.error(`${what} failed:`, error instanceof Error ? error.message : "unknown error");
@@ -138,31 +146,38 @@ export async function importRecipeFromUrl(
 }
 
 /**
+ * Each confirmed name as a catalog entry in *this* household, existing or new,
+ * so the ingredient ids a recipe is written with are never client-supplied. The
+ * density is only consulted when a row is actually created.
+ */
+function resolveLines(
+  scope: HouseholdScope,
+  lines: readonly DraftLine[],
+): Promise<NewRecipeLine[]> {
+  return Promise.all(
+    lines.map(async (line) => ({
+      ingredientId: (
+        await findOrCreateIngredient(scope, {
+          name: line.name,
+          densityGPerMl: line.densityGPerMl,
+        })
+      ).id,
+      quantity: line.quantity,
+      unitId: line.unitId,
+    })),
+  );
+}
+
+/**
  * Phase two: write a recipe the user has confirmed — the end of an import
  * (SPEC.md §3 step 5) and of manual entry alike.
- *
- * Each confirmed name becomes a catalog entry in *this* household, existing or
- * new, so the ingredient ids the recipe is written with are never
- * client-supplied. The density is only consulted when a row is actually
- * created.
  */
 export async function saveRecipeDraft(
   scope: HouseholdScope,
   draft: RecipeDraft,
 ): Promise<SaveResult> {
   try {
-    const ingredients = await Promise.all(
-      draft.lines.map(async (line) => ({
-        ingredientId: (
-          await findOrCreateIngredient(scope, {
-            name: line.name,
-            densityGPerMl: line.densityGPerMl,
-          })
-        ).id,
-        quantity: line.quantity,
-        unitId: line.unitId,
-      })),
-    );
+    const ingredients = await resolveLines(scope, draft.lines);
 
     const saved = await createRecipe(scope, {
       name: draft.name,
@@ -184,6 +199,61 @@ export async function saveRecipeDraft(
     // through can leave new ingredients behind. They are entries the user asked
     // for by name, and re-submitting reuses them.
     return { ok: false, message: "Could not save that recipe. It was not added to your recipes." };
+  }
+}
+
+/**
+ * The one answer for every recipe this household cannot edit — deleted since
+ * the form was opened, another household's, or an id that was never one.
+ * Telling them apart would be an oracle for which ids exist.
+ */
+const NOT_EDITABLE = "That recipe could not be found. It may have been deleted.";
+
+/**
+ * Save an edit over one of the household's own recipes.
+ *
+ * The recipe is looked up before any line is resolved. Resolving creates
+ * catalog entries for new names, and an edit aimed at a recipe that is not
+ * this household's should write nothing at all — not leave those behind. The
+ * scoped update re-checks ownership anyway, which covers the recipe being
+ * deleted in between.
+ *
+ * `draft.sourceUrl` is deliberately dropped: the edit form posts none, and
+ * one that arrives anyway cannot rewrite where the recipe came from.
+ */
+export async function updateRecipeDraft(
+  scope: HouseholdScope,
+  id: unknown,
+  draft: RecipeDraft,
+): Promise<SaveResult> {
+  if (typeof id !== "string") {
+    return { ok: false, message: NOT_EDITABLE };
+  }
+
+  try {
+    if ((await findRecipeById(scope, id)) === undefined) {
+      return { ok: false, message: NOT_EDITABLE };
+    }
+
+    const ingredients = await resolveLines(scope, draft.lines);
+
+    const updated = await updateRecipe(scope, id, {
+      name: draft.name,
+      baseServings: draft.baseServings,
+      steps: draft.steps,
+      ingredients,
+    });
+    if (updated === undefined) {
+      return { ok: false, message: NOT_EDITABLE };
+    }
+
+    return { ok: true, id: updated.id };
+  } catch (error) {
+    reportFailure("Updating a recipe", error);
+    // The recipe row and its lines are one transaction, so the recipe itself
+    // is as it was. New catalog entries may have been made first, as in
+    // `saveRecipeDraft`, and re-submitting reuses them.
+    return { ok: false, message: "Could not save those changes. The recipe is unchanged." };
   }
 }
 

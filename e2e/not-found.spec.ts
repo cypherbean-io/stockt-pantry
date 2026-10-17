@@ -102,3 +102,25 @@ test("answers a recipe in another household exactly as it answers one that does 
     expect(foreign.served).not.toContain(value);
   }
 });
+
+test("answers the edit page of a recipe in another household as it answers a missing one", async ({
+  page,
+}) => {
+  // The edit page pre-fills every field from the stored recipe, so it would
+  // leak more of another household's data than the recipe page itself.
+  const missing = await answer(page, `/recipes/${randomUUID()}/edit`);
+  const foreign = await answer(page, `/recipes/${foreignRecipeId()}/edit`);
+
+  expect(foreign.status).toBe(missing.status);
+  expect(foreign.title).toBe(missing.title);
+  expect(foreign.main).toBe(missing.main);
+
+  for (const value of [
+    FOREIGN_RECIPE_NAME,
+    FOREIGN_INGREDIENT_NAME,
+    E2E_FOREIGN_HOUSEHOLD_NAME,
+    E2E_FOREIGN_EMAIL,
+  ]) {
+    expect(foreign.served).not.toContain(value);
+  }
+});
