@@ -212,8 +212,9 @@ const SCREENS: ReadonlyArray<readonly [string, ReactElement]> = [
       email="someone@example.test"
       currentUserId="u1"
       members={[
+        { id: "u0", email: "founder@example.test", createdAt: new Date("2026-09-01T09:00:00Z") },
         { id: "u1", email: "someone@example.test", createdAt: CREATED },
-        { id: "u2", email: "a-much-longer-address-than-usual@example.test", createdAt: CREATED },
+        { id: "u2", email: "a-much-longer-address-than-usual@example.test", createdAt: new Date("2026-10-02T09:00:00Z") },
       ]}
       invites={INVITES}
     />,
@@ -642,5 +643,45 @@ describe("/pantry", () => {
         item.densityGPerMl === null ? undefined : String(item.densityGPerMl),
       ]),
     );
+  });
+});
+
+describe("/household", () => {
+  const markup = markupOf("/household");
+
+  /** What each form posts under `name`, once each: a table draws every cell twice. */
+  function posted(name: string): readonly (string | undefined)[] {
+    const values = openingTags(markup, ["input"])
+      .filter((tag) => attribute(tag, "type") === "hidden" && attribute(tag, "name") === name)
+      .map((tag) => attribute(tag, "value"));
+    return [...new Set(values)];
+  }
+
+  it("offers to remove only the members who joined after the one signed in", () => {
+    // The action refuses yourself and anyone senior to you; offering those
+    // buttons would only promise something it won't do.
+    expect(posted("memberId")).toEqual(["u2"]);
+  });
+
+  it("asks before removing anyone", () => {
+    // Two deliberate presses, as deleting a recipe is: every removal form sits
+    // inside a disclosure, behind its summary.
+    const disclosures = [...markup.matchAll(/<details\b.*?<\/details>/gs)].map((match) => match[0]);
+    const guarded = disclosures.filter((block) => /<summary\b[^>]*>Remove<\/summary>/.test(block));
+
+    expect(guarded.filter((block) => block.includes('name="memberId"'))).toHaveLength(1);
+    expect(markup.match(/name="memberId"/g)).toHaveLength(1);
+  });
+
+  it("names the member on the button that removes them", () => {
+    expect(markup).toContain("Yes, remove a-much-longer-address-than-usual@example.test");
+  });
+
+  it("offers to revoke the open invite and no other", () => {
+    // Revoking a used invite would not un-join anyone, and an expired one
+    // already lets nobody in.
+    const open = INVITES.filter((invite) => invite.status === "open").map((invite) => invite.id);
+
+    expect(posted("inviteId")).toEqual(open);
   });
 });

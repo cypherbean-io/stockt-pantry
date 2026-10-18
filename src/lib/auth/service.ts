@@ -11,7 +11,8 @@ import {
   inviteIsRedeemable,
   redeemInviteIntoNewUser,
 } from "@/db/queries/auth";
-import { createInvite } from "@/db/queries/invites";
+import { deleteMember } from "@/db/queries/household";
+import { createInvite, deleteInvite } from "@/db/queries/invites";
 import type { HouseholdScope, VerifiedSession } from "@/db/scope";
 
 import { MAX_PASSWORD_LENGTH, parseCredentials, parseHouseholdName } from "./credentials";
@@ -256,6 +257,30 @@ export async function issueInvite(
   });
 
   return { token, expiresAt: expires, inviteId: created.id };
+}
+
+/**
+ * Withdraw an invite nobody has used yet. `false` covers another household's
+ * id, a used invite and a malformed id alike — see `deleteInvite`.
+ */
+export async function revokeInvite(scope: HouseholdScope, inviteId: unknown): Promise<boolean> {
+  if (typeof inviteId !== "string") return false;
+  return deleteInvite(scope, inviteId);
+}
+
+/**
+ * Remove a member who joined the caller's household after the caller did,
+ * deleting their account and signing them out everywhere. `removedBy` is the
+ * caller's own id, off their session. `false` covers every refusal alike — see
+ * `deleteMember`.
+ */
+export async function removeMember(
+  scope: HouseholdScope,
+  removedBy: string,
+  memberId: unknown,
+): Promise<boolean> {
+  if (typeof memberId !== "string") return false;
+  return deleteMember(scope, { memberId, removedBy });
 }
 
 /** Whether an invite link is still worth showing a form for. */

@@ -1,8 +1,9 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, eq, isNull, sql } from "drizzle-orm";
 
 import { getDb } from "../client";
+import { guarded } from "../redact";
 import { invite } from "../schema";
-import { ownedBy, type HouseholdScope } from "../scope";
+import { isRowId, ownedBy, type HouseholdScope } from "../scope";
 
 /**
  * Invite reads and issuance for a household's own members (SPEC.md §5:
@@ -12,6 +13,8 @@ import { ownedBy, type HouseholdScope } from "../scope";
  * session and therefore no scope, so that lookup is by token hash and lives in
  * `./auth.ts` with the single-use and expiry checks.
  */
+
+const LABEL = "Invite query";
 
 /**
  * Every column except `token_hash`.
@@ -92,24 +95,58 @@ export type NewInvite = {
  * of whoever created it. `createdBy` is still caller-supplied, but the
  * composite `invite_household_created_by_fk` means Postgres rejects a member id
  * from any other household rather than storing a mislabelled invite.
+ *
+ * Guarded because that rejection is reachable: a member removed while their
+ * request is in flight credits someone who is gone. The bound values include
+ * the token hash, which an unredacted error would print into the log.
  */
 export async function createInvite(
   scope: HouseholdScope,
   values: NewInvite,
 ): Promise<InviteSummary> {
-  const rows = await getDb()
-    .insert(invite)
-    .values({
-      householdId: scope.householdId,
-      tokenHash: values.tokenHash,
-      createdBy: values.createdBy,
-      expiresAt: values.expiresAt,
-    })
-    .returning(inviteColumns);
+  const rows = await guarded(LABEL, () =>
+    getDb()
+      .insert(invite)
+      .values({
+        householdId: scope.householdId,
+        tokenHash: values.tokenHash,
+        createdBy: values.createdBy,
+        expiresAt: values.expiresAt,
+      })
+      .returning(inviteColumns),
+  );
 
   const created = rows[0];
   if (created === undefined) {
     throw new Error("Insert returned no invite row");
   }
   return created;
+}
+
+/**
+ * Revoke an invite nobody has used yet, by deleting it. Redemption looks an
+ * invite up by its token hash, so once the row is gone the link answers like
+ * one that never existed — no change to the redeem path needed.
+ *
+ * `used_at IS NULL` leaves used invites alone: revoking one would not un-join
+ * anyone, and that is what removing the member is for. (Removing the member
+ * who *issued* one does delete it — see `deleteMember`.) A revocation
+ * racing a redemption serialises with it on the row lock, so exactly one of
+ * them wins.
+ *
+ * Returns whether an invite was revoked. False for another household's id, for
+ * a used one, and for an id that is not shaped like one at all.
+ */
+export async function deleteInvite(scope: HouseholdScope, id: string): Promise<boolean> {
+  if (!isRowId(id)) {
+    return false;
+  }
+
+  const rows = await guarded(LABEL, () =>
+    getDb()
+      .delete(invite)
+      .where(ownedBy(scope, invite, eq(invite.id, id), isNull(invite.usedAt)))
+      .returning({ id: invite.id }),
+  );
+  return rows.length > 0;
 }

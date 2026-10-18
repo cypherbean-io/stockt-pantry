@@ -3,8 +3,8 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { ingredient, invite, pantryItem, recipe, recipeIngredient, session, user } from "./schema";
 import { unsafeHouseholdScopeFromId, type HouseholdScope } from "./scope";
-import { findHousehold, listMembers } from "./queries/household";
-import { createInvite, listInvites, findInviteById } from "./queries/invites";
+import { deleteMember, findHousehold, listMembers } from "./queries/household";
+import { createInvite, deleteInvite, listInvites, findInviteById } from "./queries/invites";
 import {
   createIngredient,
   findIngredientById,
@@ -100,6 +100,50 @@ describe("household and members", () => {
     expect(mine.map((row) => row.id)).toEqual([alpha.userId]);
   });
 
+  it("does not remove another household's member", async () => {
+    expect(await deleteMember(scopeA, { memberId: beta.userId, removedBy: alpha.userId })).toBe(
+      false,
+    );
+    expect((await listMembers(scopeB)).map((row) => row.id)).toEqual([beta.userId]);
+  });
+
+  it("does not remove a member on behalf of another household's member", async () => {
+    // `removedBy` comes off the caller's session, but the query does not take
+    // it on trust: it has to name someone in the scope's own household.
+    const [second] = await db
+      .insert(user)
+      .values({
+        email: "second@alpha.example",
+        passwordHash: "placeholder-not-a-real-hash",
+        householdId: alpha.householdId,
+      })
+      .returning({ id: user.id });
+
+    expect(await deleteMember(scopeA, { memberId: second!.id, removedBy: beta.userId })).toBe(
+      false,
+    );
+    expect((await listMembers(scopeA)).map((row) => row.id)).toContain(second!.id);
+  });
+
+  it("removes its own member", async () => {
+    // The other half of the two tests above: false there has to mean "not
+    // allowed", not "this never deletes anything".
+    const [second] = await db
+      .insert(user)
+      .values({
+        email: "second@alpha.example",
+        passwordHash: "placeholder-not-a-real-hash",
+        householdId: alpha.householdId,
+      })
+      .returning({ id: user.id });
+
+    expect(await deleteMember(scopeA, { memberId: second!.id, removedBy: alpha.userId })).toBe(
+      true,
+    );
+    expect((await listMembers(scopeA)).map((row) => row.id)).toEqual([alpha.userId]);
+    expect((await listMembers(scopeB)).map((row) => row.id)).toEqual([beta.userId]);
+  });
+
   it("never hands a password hash to a caller", async () => {
     // The member list renders into a page, and server component props are
     // serialised into the HTML payload.
@@ -139,6 +183,10 @@ describe("household and members", () => {
   it.each([
     ["findHousehold", () => findHousehold(malformedScope)],
     ["listMembers", () => listMembers(malformedScope)],
+    [
+      "deleteMember",
+      () => deleteMember(malformedScope, { memberId: beta.userId, removedBy: alpha.userId }),
+    ],
   ])("does not carry the statement or its parameters out of %s", async (_name, run) => {
     const message = await escapedMessage(run());
 
@@ -580,17 +628,73 @@ describe("invites", () => {
 
   it("cannot issue an invite crediting another household's member", async () => {
     // `createdBy` is the one caller-supplied id on this path. The composite key
-    // is what stops it naming someone outside the scope's household.
-    const error = await rejection(
-      createInvite(scopeA, {
-        tokenHash: "hash-of-a-borrowed-token",
-        createdBy: beta.userId,
-        expiresAt: new Date("2030-01-01T00:00:00Z"),
-      }),
+    // is what stops it naming someone outside the scope's household. The
+    // rejection arrives redacted (see below), so the SQLSTATE and constraint
+    // are read off its message rather than off the driver error.
+    const message = await createInvite(scopeA, {
+      tokenHash: "hash-of-a-borrowed-token",
+      createdBy: beta.userId,
+      expiresAt: new Date("2030-01-01T00:00:00Z"),
+    }).then(
+      () => "resolved",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
     );
 
-    expect(error.code).toBe(FOREIGN_KEY_VIOLATION);
-    expect(error.constraint_name).toBe("invite_household_created_by_fk");
+    expect(message).toContain(FOREIGN_KEY_VIOLATION);
+    expect(message).toContain("invite_household_created_by_fk");
+  });
+
+  it("does not carry the token hash out of an invite that is rejected", async () => {
+    // Reachable without forging anything now that members can be removed: a
+    // removed member's "generate an invite" request can pass its session check
+    // just before the removal lands, and then credit a member who is gone.
+    const marker = "DIGEST-MARKER-token-hash";
+    await db.delete(user).where(eq(user.id, alpha.userId));
+
+    const message = await createInvite(scopeA, {
+      tokenHash: marker,
+      createdBy: alpha.userId,
+      expiresAt: new Date("2030-01-01T00:00:00Z"),
+    }).then(
+      () => "resolved",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+
+    expect(message).not.toContain(marker);
+    expect(message).not.toContain("params:");
+    expect(message).not.toContain("Failed query");
+    expect(message).toContain(FOREIGN_KEY_VIOLATION);
+  });
+
+  it("does not revoke another household's invite", async () => {
+    expect(await deleteInvite(scopeA, beta.inviteId)).toBe(false);
+    expect(await findInviteById(scopeB, beta.inviteId)).toBeDefined();
+  });
+
+  it("revokes its own open invite", async () => {
+    // The other half of the test above: false there has to mean "not yours",
+    // not "this never deletes anything".
+    expect(await deleteInvite(scopeA, alpha.inviteId)).toBe(true);
+    expect(await findInviteById(scopeA, alpha.inviteId)).toBeUndefined();
+    expect(await findInviteById(scopeB, beta.inviteId)).toBeDefined();
+  });
+
+  it("does not carry the statement or its parameters out of deleteInvite", async () => {
+    // A malformed scope is the cheapest way to provoke a driver error (SQLSTATE
+    // 22P02); the cast past `unsafeHouseholdScopeFromId` is the point of the
+    // test, as it is for the household queries above.
+    const marker = "DIGEST-MARKER-NOT-A-UUID";
+    const malformedScope = { householdId: marker } as unknown as HouseholdScope;
+
+    const message = await deleteInvite(malformedScope, alpha.inviteId).then(
+      () => "resolved",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+
+    expect(message).not.toContain(marker);
+    expect(message).not.toContain("params:");
+    expect(message).not.toContain("Failed query");
+    expect(message).toContain("22P02");
   });
 
   it("never hands the token hash back to a caller", async () => {
