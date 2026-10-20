@@ -1,8 +1,8 @@
-import { and, eq, gt, isNull, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
 
 import { getDb } from "../client";
 import { isUniqueViolation, redacted as redactedWith, guarded as guardedWith } from "../redact";
-import { household, invite, session, user } from "../schema";
+import { household, invite, loginThrottle, session, user } from "../schema";
 import type { VerifiedSession } from "../scope";
 
 /**
@@ -17,7 +17,9 @@ import type { VerifiedSession } from "../scope";
  *
  * Each one is keyed by something unguessable or already secret (an email plus a
  * password hash, a session token hash, an invite token hash) and none of them
- * accepts a household id from the caller.
+ * accepts a household id from the caller. The login throttle is the one
+ * exception to the first half: it is keyed by a bare address, and why that is
+ * fine is at `throttleKey`.
  */
 
 /**
@@ -255,6 +257,91 @@ export async function findSessionByTokenHash(
       .limit(1),
   );
   return rows[0];
+}
+
+/**
+ * The login throttle's key for an address. Lowered in SQL for the reason
+ * `lowered` gives — the key has to collapse exactly the spellings the lookup
+ * does, or each capitalisation gets its own budget — then hashed, so the table
+ * never holds what was typed (see `loginThrottle` in the schema).
+ *
+ * Unlike every other key in this module it is guessable. That is fine: the row
+ * holds a count and a timestamp, and the login form already lets anyone add to
+ * any address's count.
+ *
+ * A plain hash, not a keyed one, so a dump can still be tested against a list
+ * of addresses or a guessed password typed into the wrong field. What bounds
+ * that is retention — an expired row goes at the next login attempt, see
+ * `recordLoginAttempt`, which on a quiet deployment can be weeks — and
+ * `couldBeAccountEmail` keeping out every mistyped password without exactly
+ * one `@`.
+ */
+function throttleKey(email: string) {
+  return sql<string>`encode(sha256(convert_to(${lowered(email)}, 'UTF8')), 'hex')`;
+}
+
+export type AttemptWindow = {
+  readonly now: Date;
+  /** Windows that started at or before this have run out. */
+  readonly windowCutoff: Date;
+};
+
+/**
+ * Expired rows deleted per attempt. Each attempt adds at most one row, so any
+ * batch above one outpaces growth; the cap keeps one request's share of a
+ * backlog small.
+ */
+const SWEEP_BATCH = 100;
+
+/**
+ * Count one login attempt against an address and return how many it has made
+ * in the current window, this one included.
+ *
+ * One statement, so the count and the increment cannot come apart: two
+ * simultaneous attempts serialise on the row lock and get different numbers,
+ * where a read followed by a write would let both read the same one. An
+ * expired window is reset in the same statement — the `CASE` sees the old row,
+ * and `excluded` is the row this attempt would have inserted.
+ *
+ * Every attempt first sweeps a batch of rows whose window has run out. A row
+ * past its window throttles nothing, and without the sweep each address ever
+ * typed would stay for good — an unauthenticated way to grow the table, and a
+ * standing record of who tried to sign in. `SKIP LOCKED` keeps concurrent
+ * attempts from queueing on, or deadlocking over, each other's sweeps; a row an
+ * upsert is resetting is left to the next one. Rows linger past their window
+ * only until the next attempt at any address.
+ */
+export async function recordLoginAttempt(email: string, window: AttemptWindow): Promise<number> {
+  const expired = lte(loginThrottle.windowStartedAt, window.windowCutoff);
+
+  await guarded(() => {
+    const db = getDb();
+    const stale = db
+      .select({ keyHash: loginThrottle.keyHash })
+      .from(loginThrottle)
+      .where(expired)
+      .limit(SWEEP_BATCH)
+      .for("update", { skipLocked: true });
+    return db.delete(loginThrottle).where(inArray(loginThrottle.keyHash, stale));
+  });
+
+  const rows = await guarded(() =>
+    getDb()
+      .insert(loginThrottle)
+      .values({ keyHash: throttleKey(email), attempts: 1, windowStartedAt: window.now })
+      .onConflictDoUpdate({
+        target: loginThrottle.keyHash,
+        set: {
+          attempts: sql`case when ${expired} then 1 else ${loginThrottle.attempts} + 1 end`,
+          windowStartedAt: sql`case when ${expired} then excluded.window_started_at else ${loginThrottle.windowStartedAt} end`,
+        },
+      })
+      .returning({ attempts: loginThrottle.attempts }),
+  );
+
+  const recorded = rows[0];
+  if (recorded === undefined) throw new Error("Upsert returned no login throttle row");
+  return recorded.attempts;
 }
 
 /** Logout. Deletes the row, so a captured token stops working immediately. */

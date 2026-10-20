@@ -1,7 +1,16 @@
 import { sql } from "drizzle-orm";
 
 import { getDb, type Database } from "../client";
-import { household, ingredient, invite, pantryItem, recipe, recipeIngredient, user } from "../schema";
+import {
+  household,
+  ingredient,
+  invite,
+  loginThrottle,
+  pantryItem,
+  recipe,
+  recipeIngredient,
+  user,
+} from "../schema";
 
 /**
  * Fixtures for the integration suite.
@@ -52,12 +61,16 @@ async function assertThrowawayDatabase(): Promise<void> {
 
 /**
  * Everything tenant-owned hangs off `household` by a cascading foreign key, so
- * one truncate clears the fixtures. `unit` is reference data seeded by the
- * migrations and deliberately survives.
+ * one truncate clears the fixtures. `login_throttle` hangs off nothing — an
+ * address need not belong to anyone — so it is named separately; left behind,
+ * every login in one test would count against the next. `unit` is reference
+ * data seeded by the migrations and deliberately survives.
  */
 export async function resetDatabase(): Promise<void> {
   await assertThrowawayDatabase();
-  await testDb().execute(sql`truncate table ${household} restart identity cascade`);
+  await testDb().execute(
+    sql`truncate table ${household}, ${loginThrottle} restart identity cascade`,
+  );
 }
 
 export type SeededHousehold = {
