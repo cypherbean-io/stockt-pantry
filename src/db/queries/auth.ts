@@ -2,7 +2,7 @@ import { and, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
 
 import { getDb } from "../client";
 import { isUniqueViolation, redacted as redactedWith, guarded as guardedWith } from "../redact";
-import { household, invite, loginThrottle, session, user } from "../schema";
+import { household, invite, loginThrottle, passwordReset, session, user } from "../schema";
 import type { VerifiedSession } from "../scope";
 
 /**
@@ -16,7 +16,7 @@ import type { VerifiedSession } from "../scope";
  * should not look like an oversight.
  *
  * Each one is keyed by something unguessable or already secret (an email plus a
- * password hash, a session token hash, an invite token hash) and none of them
+ * password hash, a session, invite or password reset token hash) and none of them
  * accepts a household id from the caller. The login throttle is the one
  * exception to the first half: it is keyed by a bare address, and why that is
  * fine is at `throttleKey`.
@@ -221,15 +221,176 @@ export async function redeemInviteIntoNewUser(
   }
 }
 
+/**
+ * The address a reset link is for, while it could still be redeemed. Unknown
+ * and expired answer alike; a used link has no row to find.
+ *
+ * Advisory, as `inviteIsRedeemable` is: `redeemPasswordReset` re-tests expiry
+ * inside the claim.
+ */
+export async function findPasswordResetAccount(
+  tokenHash: string,
+  now: Date,
+): Promise<{ readonly email: string } | undefined> {
+  const rows = await guarded(() =>
+    getDb()
+      .select({ email: user.email })
+      .from(passwordReset)
+      .innerJoin(
+        user,
+        and(eq(user.householdId, passwordReset.householdId), eq(user.id, passwordReset.userId)),
+      )
+      .where(and(eq(passwordReset.tokenHash, tokenHash), gt(passwordReset.expiresAt, now)))
+      .limit(1),
+  );
+  return rows[0];
+}
+
+export type PasswordResetRedemption = {
+  readonly tokenHash: string;
+  readonly passwordHash: string;
+  readonly now: Date;
+};
+
+export type PasswordResetOutcome =
+  | { readonly ok: true; readonly value: { readonly email: string } }
+  | { readonly ok: false; readonly reason: "reset-invalid" };
+
+/**
+ * Spend a reset link: set the member's password, sign them out everywhere and
+ * withdraw every link they handed out, in one transaction.
+ *
+ * Single use is a `DELETE ... RETURNING` on the link — the same serialisation
+ * `redeemInviteIntoNewUser` gets from its conditional update. Two simultaneous
+ * redemptions queue on the row lock; the loser finds the row gone.
+ *
+ * The member comes from the claimed row, never from the caller. A reset is as
+ * often "someone else may have my password" as "I forgot it", and only the
+ * second is fixed by a new hash alone. Whoever else had it holds sessions, and
+ * may have minted reset links and invites in the member's name — nothing lists
+ * the links — so all three go, as they do when a member is removed. A used
+ * invite stays: revoking it would un-join nobody. A sign-in that verified the
+ * old hash and has not yet opened its session is refused by `createSession`.
+ *
+ * Nothing here starts a session: the member signs in through the login form,
+ * as any other time.
+ *
+ * A failure anywhere rolls the claim back with it, so the link still works.
+ */
+export async function redeemPasswordReset(
+  input: PasswordResetRedemption,
+): Promise<PasswordResetOutcome> {
+  return guarded(() =>
+    getDb().transaction(async (tx) => {
+      const [claimed] = await tx
+        .delete(passwordReset)
+        .where(
+          and(eq(passwordReset.tokenHash, input.tokenHash), gt(passwordReset.expiresAt, input.now)),
+        )
+        .returning({ userId: passwordReset.userId, householdId: passwordReset.householdId });
+
+      if (claimed === undefined) {
+        return { ok: false as const, reason: "reset-invalid" as const };
+      }
+
+      const member = and(
+        eq(user.householdId, claimed.householdId),
+        eq(user.id, claimed.userId),
+      );
+      const [updated] = await tx
+        .update(user)
+        .set({ passwordHash: input.passwordHash })
+        .where(member)
+        .returning({ email: user.email });
+      // Unreachable while the foreign key cascades — a removed member takes
+      // their link with them — but answer as for any other dead link if not.
+      if (updated === undefined) {
+        return { ok: false as const, reason: "reset-invalid" as const };
+      }
+
+      await tx
+        .delete(session)
+        .where(
+          and(eq(session.householdId, claimed.householdId), eq(session.userId, claimed.userId)),
+        );
+      await tx
+        .delete(passwordReset)
+        .where(
+          and(
+            eq(passwordReset.householdId, claimed.householdId),
+            eq(passwordReset.createdBy, claimed.userId),
+          ),
+        );
+      await tx
+        .delete(invite)
+        .where(
+          and(
+            eq(invite.householdId, claimed.householdId),
+            eq(invite.createdBy, claimed.userId),
+            isNull(invite.usedAt),
+          ),
+        );
+
+      return { ok: true as const, value: { email: updated.email } };
+    }),
+  );
+}
+
 export type NewSession = {
   readonly tokenHash: string;
   readonly userId: string;
   readonly householdId: string;
   readonly expiresAt: Date;
+  /** The stored hash the caller just authenticated the member against. */
+  readonly passwordHash: string;
 };
 
-export async function createSession(values: NewSession): Promise<void> {
-  await guarded(() => getDb().insert(session).values(values));
+/**
+ * Open a session, but only while `passwordHash` is still the member's.
+ * Returns whether one was opened.
+ *
+ * `logIn` reads the hash, spends ~250ms verifying against it, then lands here.
+ * A password reset committing in that gap has already deleted every session
+ * it could see, so a plain insert would hand whoever typed the *old* password
+ * a fresh 30-day session that outlives the reset. Hence an insert-select on
+ * the member's row matching the hash that was verified.
+ *
+ * `FOR SHARE` is what closes the race rather than narrowing it. A reset still
+ * in flight holds the member's row; this waits for it, then re-reads the row,
+ * finds the new hash and inserts nothing. A sign-in that gets the row first
+ * makes the reset wait instead, and the reset's session delete — a later
+ * statement — then sees this session and takes it.
+ */
+export async function createSession(values: NewSession): Promise<boolean> {
+  const db = getDb();
+  const rows = await guarded(() =>
+    db
+      .insert(session)
+      .select(
+        // Every column, in table order: Drizzle's insert-select requires it.
+        db
+          .select({
+            tokenHash: sql<string>`${values.tokenHash}::text`.as("token_hash"),
+            userId: user.id,
+            householdId: user.householdId,
+            expiresAt: sql<Date>`${values.expiresAt.toISOString()}::timestamptz`.as(
+              "expires_at",
+            ),
+            createdAt: sql<Date>`now()`.as("created_at"),
+          })
+          .from(user)
+          .where(
+            and(
+              eq(user.householdId, values.householdId),
+              eq(user.id, values.userId),
+              eq(user.passwordHash, values.passwordHash),
+            ),
+          )
+          .for("share"),
+      )
+      .returning({ tokenHash: session.tokenHash }),
+  );
+  return rows.length > 0;
 }
 
 /**

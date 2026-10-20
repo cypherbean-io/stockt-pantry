@@ -1,10 +1,20 @@
 import { eq, sql } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { ingredient, invite, pantryItem, recipe, recipeIngredient, session, user } from "./schema";
+import {
+  ingredient,
+  invite,
+  pantryItem,
+  passwordReset,
+  recipe,
+  recipeIngredient,
+  session,
+  user,
+} from "./schema";
 import { unsafeHouseholdScopeFromId, type HouseholdScope } from "./scope";
 import { deleteMember, findHousehold, listMembers } from "./queries/household";
 import { createInvite, deleteInvite, listInvites, findInviteById } from "./queries/invites";
+import { createPasswordReset } from "./queries/password-resets";
 import {
   createIngredient,
   findIngredientById,
@@ -712,6 +722,132 @@ describe("invites", () => {
   });
 });
 
+describe("password reset links", () => {
+  const EXPIRES = new Date("2030-01-01T00:00:00Z");
+
+  /** A member of Alpha who joined after its owner, so the owner may reset them. */
+  async function juniorOfAlpha(): Promise<string> {
+    const [second] = await db
+      .insert(user)
+      .values({
+        email: "second@alpha.example",
+        passwordHash: "placeholder-not-a-real-hash",
+        householdId: alpha.householdId,
+      })
+      .returning({ id: user.id });
+    return second!.id;
+  }
+
+  it("does not issue a link for another household's member", async () => {
+    // Beta's owner joined after Alpha's (seeded second), so seniority alone
+    // would not refuse this — only the scope does.
+    expect(
+      await createPasswordReset(scopeA, {
+        tokenHash: "hash-for-someone-elses-member",
+        memberId: beta.userId,
+        createdBy: alpha.userId,
+        expiresAt: EXPIRES,
+      }),
+    ).toBeUndefined();
+    expect(await db.select().from(passwordReset)).toHaveLength(0);
+  });
+
+  it("does not issue a link on behalf of another household's member", async () => {
+    // `createdBy` comes off the caller's session, but the query does not take
+    // it on trust: it has to name someone in the scope's own household.
+    const second = await juniorOfAlpha();
+
+    expect(
+      await createPasswordReset(scopeA, {
+        tokenHash: "hash-for-a-borrowed-issuer",
+        memberId: second,
+        createdBy: beta.userId,
+        expiresAt: EXPIRES,
+      }),
+    ).toBeUndefined();
+    expect(await db.select().from(passwordReset)).toHaveLength(0);
+  });
+
+  it("issues a link for its own member, into its own household", async () => {
+    // The other half of the two tests above: undefined there has to mean "not
+    // allowed", not "this never issues anything".
+    const second = await juniorOfAlpha();
+
+    const created = await createPasswordReset(scopeA, {
+      tokenHash: "hash-for-alphas-second",
+      memberId: second,
+      createdBy: alpha.userId,
+      expiresAt: EXPIRES,
+    });
+
+    expect(created).toEqual({ expiresAt: EXPIRES });
+    expect(await db.select().from(passwordReset)).toEqual([
+      expect.objectContaining({
+        householdId: alpha.householdId,
+        userId: second,
+        createdBy: alpha.userId,
+      }),
+    ]);
+  });
+
+  it("does not replace another household's link when issuing one", async () => {
+    // Issuing replaces the member's outstanding link. The replacement is keyed
+    // by household as well as member, so it cannot reach Beta's row.
+    await db.insert(passwordReset).values({
+      tokenHash: "hash-of-betas-link",
+      householdId: beta.householdId,
+      userId: beta.userId,
+      createdBy: beta.userId,
+      expiresAt: EXPIRES,
+    });
+
+    await createPasswordReset(scopeA, {
+      tokenHash: "hash-trying-to-overwrite-beta",
+      memberId: beta.userId,
+      createdBy: alpha.userId,
+      expiresAt: EXPIRES,
+    });
+
+    expect((await db.select().from(passwordReset)).map((row) => row.tokenHash)).toEqual([
+      "hash-of-betas-link",
+    ]);
+  });
+
+  it("never hands the token hash back to a caller", async () => {
+    const second = await juniorOfAlpha();
+
+    const created = await createPasswordReset(scopeA, {
+      tokenHash: "hash-that-must-not-escape",
+      memberId: second,
+      createdBy: alpha.userId,
+      expiresAt: EXPIRES,
+    });
+
+    expect(JSON.stringify(created)).not.toContain("hash-that-must-not-escape");
+  });
+
+  it("does not carry the statement or its parameters out of createPasswordReset", async () => {
+    const marker = "DIGEST-MARKER-NOT-A-UUID";
+    const malformedScope = { householdId: marker } as unknown as HouseholdScope;
+
+    const message = await createPasswordReset(malformedScope, {
+      tokenHash: "DIGEST-MARKER-token-hash",
+      memberId: beta.userId,
+      createdBy: alpha.userId,
+      expiresAt: EXPIRES,
+    }).then(
+      () => "resolved",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+
+    expect(message).not.toContain(marker);
+    expect(message).not.toContain("DIGEST-MARKER-token-hash");
+    expect(message).not.toContain("params:");
+    expect(message).not.toContain("Failed query");
+    expect(message).toContain("22P02");
+  });
+});
+
 describe("database-level cross-tenant integrity", () => {
   /**
    * The query layer is the control; these constraints are the backstop. A bug
@@ -783,6 +919,36 @@ describe("database-level cross-tenant integrity", () => {
 
     expect(error.code).toBe(FOREIGN_KEY_VIOLATION);
     expect(error.constraint_name).toBe("session_household_user_fk");
+  });
+
+  it("refuses a password reset link for another household's member", async () => {
+    const error = await rejection(
+      db.insert(passwordReset).values({
+        tokenHash: "hash-of-a-cross-tenant-link",
+        householdId: alpha.householdId,
+        userId: beta.userId,
+        createdBy: alpha.userId,
+        expiresAt: new Date("2030-01-01T00:00:00Z"),
+      }),
+    );
+
+    expect(error.code).toBe(FOREIGN_KEY_VIOLATION);
+    expect(error.constraint_name).toBe("password_reset_household_user_fk");
+  });
+
+  it("refuses a password reset link crediting another household's member", async () => {
+    const error = await rejection(
+      db.insert(passwordReset).values({
+        tokenHash: "hash-of-a-mislabelled-link",
+        householdId: alpha.householdId,
+        userId: alpha.userId,
+        createdBy: beta.userId,
+        expiresAt: new Date("2030-01-01T00:00:00Z"),
+      }),
+    );
+
+    expect(error.code).toBe(FOREIGN_KEY_VIOLATION);
+    expect(error.constraint_name).toBe("password_reset_household_created_by_fk");
   });
 
   it("revokes a member's sessions and invites when the member is deleted", async () => {

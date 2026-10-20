@@ -153,6 +153,50 @@ export const session = pgTable(
 );
 
 /**
+ * Outstanding password reset links. Issued by a member for someone who joined
+ * after them, shared out-of-band as invites are, and deleted on use.
+ *
+ * Shaped like `session` rather than `invite`: keyed by the hash of the token in
+ * the link, never the token, and with no "used" state — redeeming one deletes
+ * the row, so single use is the row being gone rather than a flag a query has
+ * to remember to test.
+ */
+export const passwordReset = pgTable(
+  "password_reset",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    householdId: uuid("household_id")
+      .notNull()
+      .references(() => household.id, { onDelete: "cascade" }),
+    /** Whose password the link sets. */
+    userId: uuid("user_id").notNull(),
+    createdBy: uuid("created_by").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    // At most one outstanding link per member: issuing another replaces it
+    // (`createPasswordReset`), which is how a link sent to the wrong place is
+    // withdrawn. Also the index behind the foreign key below.
+    unique("password_reset_household_user_unique").on(table.householdId, table.userId),
+    // Both composite, as `invite`'s is: a link can neither name nor be credited
+    // to someone outside its household. Cascade on both, so removing a member
+    // kills the links that would have reset them and the ones they issued.
+    foreignKey({
+      name: "password_reset_household_user_fk",
+      columns: [table.householdId, table.userId],
+      foreignColumns: [user.householdId, user.id],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "password_reset_household_created_by_fk",
+      columns: [table.householdId, table.createdBy],
+      foreignColumns: [user.householdId, user.id],
+    }).onDelete("cascade"),
+    index("password_reset_household_created_by_idx").on(table.householdId, table.createdBy),
+  ],
+);
+
+/**
  * Password checks spent per address in the current window (see
  * `src/lib/auth/throttle.ts` for the policy).
  *
@@ -300,6 +344,7 @@ export type HouseholdRow = typeof household.$inferSelect;
 export type UserRow = typeof user.$inferSelect;
 export type InviteRow = typeof invite.$inferSelect;
 export type SessionRow = typeof session.$inferSelect;
+export type PasswordResetRow = typeof passwordReset.$inferSelect;
 export type LoginThrottleRow = typeof loginThrottle.$inferSelect;
 export type UnitRow = typeof unit.$inferSelect;
 export type IngredientRow = typeof ingredient.$inferSelect;

@@ -6,14 +6,17 @@ import {
   createHouseholdWithOwner,
   createSession,
   deleteSessionByTokenHash,
+  findPasswordResetAccount,
   findSessionByTokenHash,
   findUserCredentialsByEmail,
   inviteIsRedeemable,
   recordLoginAttempt,
   redeemInviteIntoNewUser,
+  redeemPasswordReset,
 } from "@/db/queries/auth";
 import { deleteMember } from "@/db/queries/household";
 import { createInvite, deleteInvite } from "@/db/queries/invites";
+import { createPasswordReset } from "@/db/queries/password-resets";
 import type { HouseholdScope, VerifiedSession } from "@/db/scope";
 
 import {
@@ -21,13 +24,21 @@ import {
   couldBeAccountEmail,
   parseCredentials,
   parseHouseholdName,
+  parseNewPassword,
 } from "./credentials";
 import type { FieldErrors } from "./credentials";
 import type { AuthEnv } from "./env";
 import { hashPassword, verifyPassword } from "./password";
 import { signupTokenAccepted } from "./signup-token";
 import { loginAttemptAllowed, loginWindowCutoff } from "./throttle";
-import { INVITE_TTL_MS, SESSION_TTL_MS, expiresAt, generateToken, hashToken } from "./token";
+import {
+  INVITE_TTL_MS,
+  PASSWORD_RESET_TTL_MS,
+  SESSION_TTL_MS,
+  expiresAt,
+  generateToken,
+  hashToken,
+} from "./token";
 
 /**
  * The auth flows (SPEC.md §2: household signup gated by a deployment secret,
@@ -45,7 +56,8 @@ export type AuthError =
   | "email-taken"
   | "invalid-credentials"
   | "too-many-attempts"
-  | "invite-invalid";
+  | "invite-invalid"
+  | "reset-invalid";
 
 export type AuthResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -64,21 +76,44 @@ export type Options = {
   readonly env?: AuthEnv;
 };
 
+/**
+ * Undefined when `passwordHash` — the stored hash the member was just
+ * authenticated against — has been replaced in the meantime. See
+ * `createSession`: that is a password reset racing a sign-in.
+ */
 async function issueSession(
   member: { readonly userId: string; readonly householdId: string },
+  passwordHash: string,
   now: Date,
-): Promise<IssuedSession> {
+): Promise<IssuedSession | undefined> {
   const token = generateToken();
   const expires = expiresAt(now, SESSION_TTL_MS);
 
-  await createSession({
+  const created = await createSession({
     tokenHash: hashToken(token),
     userId: member.userId,
     householdId: member.householdId,
     expiresAt: expires,
+    passwordHash,
   });
+  if (!created) return undefined;
 
   return { token, expiresAt: expires, ...member };
+}
+
+/**
+ * For signup and join, where the member was created a moment ago with the hash
+ * in hand. Nothing can have reset it yet — a link needs a member who was there
+ * first to issue it — so a refusal here is a bug, not a user error.
+ */
+async function issueFirstSession(
+  member: { readonly userId: string; readonly householdId: string },
+  passwordHash: string,
+  now: Date,
+): Promise<IssuedSession> {
+  const issued = await issueSession(member, passwordHash, now);
+  if (issued === undefined) throw new Error("No session for a member created moments ago");
+  return issued;
 }
 
 /**
@@ -142,16 +177,17 @@ export async function signUpHousehold(
     };
   }
 
+  const passwordHash = await hashPassword(credentials.value.password);
   const created = await createHouseholdWithOwner({
     householdName: name.value,
     email: credentials.value.email,
-    passwordHash: await hashPassword(credentials.value.password),
+    passwordHash,
   });
   if (!created.ok) {
     return { ok: false, error: "email-taken" };
   }
 
-  return { ok: true, value: await issueSession(created.value, now) };
+  return { ok: true, value: await issueFirstSession(created.value, passwordHash, now) };
 }
 
 /**
@@ -208,11 +244,18 @@ export async function logIn(
   }
 
   // A fresh token per login: an existing session is never reissued, so there is
-  // no value an attacker can fix in a browser ahead of authentication.
-  return {
-    ok: true,
-    value: await issueSession({ userId: found.id, householdId: found.householdId }, now),
-  };
+  // no value an attacker can fix in a browser ahead of authentication. Opened
+  // only if the hash just verified is still the member's — a password reset
+  // landing during the KDF makes the password typed here the old one.
+  const issued = await issueSession(
+    { userId: found.id, householdId: found.householdId },
+    found.passwordHash,
+    now,
+  );
+  if (issued === undefined) {
+    return { ok: false, error: "invalid-credentials" };
+  }
+  return { ok: true, value: issued };
 }
 
 /**
@@ -250,17 +293,18 @@ export async function joinWithInvite(
     return { ok: false, error: "invalid-input", fieldErrors: credentials.errors };
   }
 
+  const passwordHash = await hashPassword(credentials.value.password);
   const redeemed = await redeemInviteIntoNewUser({
     tokenHash,
     email: credentials.value.email,
-    passwordHash: await hashPassword(credentials.value.password),
+    passwordHash,
     now,
   });
   if (!redeemed.ok) {
     return { ok: false, error: redeemed.reason };
   }
 
-  return { ok: true, value: await issueSession(redeemed.value, now) };
+  return { ok: true, value: await issueFirstSession(redeemed.value, passwordHash, now) };
 }
 
 export type IssuedInvite = {
@@ -310,6 +354,90 @@ export async function removeMember(
 ): Promise<boolean> {
   if (typeof memberId !== "string") return false;
   return deleteMember(scope, { memberId, removedBy });
+}
+
+export type IssuedPasswordReset = {
+  /** Shown once, in the link the member shares. Never stored, never logged. */
+  readonly token: string;
+  readonly expiresAt: Date;
+};
+
+/**
+ * Issue a link that sets `memberId`'s password, replacing any they already
+ * had. `issuedBy` is the caller's own id, off their session. Undefined covers
+ * every refusal alike — yourself, someone who joined before you, someone in
+ * another household, a malformed id — see `createPasswordReset`.
+ */
+export async function issuePasswordReset(
+  scope: HouseholdScope,
+  issuedBy: string,
+  memberId: unknown,
+  options: Options = {},
+): Promise<IssuedPasswordReset | undefined> {
+  if (typeof memberId !== "string") return undefined;
+
+  const now = options.now ?? new Date();
+  const token = generateToken();
+
+  const created = await createPasswordReset(scope, {
+    tokenHash: hashToken(token),
+    memberId,
+    createdBy: issuedBy,
+    expiresAt: expiresAt(now, PASSWORD_RESET_TTL_MS),
+  });
+  if (created === undefined) return undefined;
+
+  return { token, expiresAt: created.expiresAt };
+}
+
+/** The account a reset link is for, if it is still worth showing a form for. */
+export async function passwordResetFor(
+  token: string,
+  options: Options = {},
+): Promise<{ readonly email: string } | undefined> {
+  if (token === "") return undefined;
+  return findPasswordResetAccount(hashToken(token), options.now ?? new Date());
+}
+
+/**
+ * Spend a reset link on a new password.
+ *
+ * Shaped like `joinWithInvite`: there is no parameter naming whose password
+ * this sets — the link decides — and a dead link is turned away before the
+ * 250ms of hashing. On success the member is signed out everywhere, every
+ * link they issued is withdrawn, and they are *not* signed in: they use the
+ * login form like any other time, so this flow never mints a session. The address comes back only so the page can say which
+ * account to sign in to.
+ */
+export async function resetPassword(
+  input: { readonly resetToken: unknown; readonly password: unknown },
+  options: Options = {},
+): Promise<AuthResult<{ readonly email: string }>> {
+  const now = options.now ?? new Date();
+
+  if (typeof input.resetToken !== "string" || input.resetToken === "") {
+    return { ok: false, error: "reset-invalid" };
+  }
+  const tokenHash = hashToken(input.resetToken);
+
+  if ((await findPasswordResetAccount(tokenHash, now)) === undefined) {
+    return { ok: false, error: "reset-invalid" };
+  }
+
+  const password = parseNewPassword(input.password);
+  if (!password.ok) {
+    return { ok: false, error: "invalid-input", fieldErrors: password.errors };
+  }
+
+  const redeemed = await redeemPasswordReset({
+    tokenHash,
+    passwordHash: await hashPassword(password.value),
+    now,
+  });
+  if (!redeemed.ok) {
+    return { ok: false, error: redeemed.reason };
+  }
+  return { ok: true, value: redeemed.value };
 }
 
 /** Whether an invite link is still worth showing a form for. */

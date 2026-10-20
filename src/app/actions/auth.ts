@@ -5,9 +5,11 @@ import { redirect } from "next/navigation";
 
 import {
   issueInvite,
+  issuePasswordReset,
   joinWithInvite,
   logIn,
   removeMember,
+  resetPassword,
   revokeInvite,
   signUpHousehold,
   type AuthError,
@@ -33,8 +35,8 @@ export type FormState =
 /**
  * Wording is deliberately uniform where the underlying causes should not be
  * distinguishable. `invalid-credentials` covers "no such account" and "wrong
- * password" alike, and the invite message does not say which of used, expired
- * or never-existed applies.
+ * password" alike, and the invite and reset messages do not say which of used,
+ * expired or never-existed applies.
  */
 const MESSAGES: Record<AuthError, string> = {
   "invalid-input": "Check the fields below.",
@@ -47,6 +49,8 @@ const MESSAGES: Record<AuthError, string> = {
     LOGIN_WINDOW_MS / 60_000
   } minutes, then try again.`,
   "invite-invalid": "This invite link is not valid. It may have been used already, or expired.",
+  "reset-invalid":
+    "This reset link is not valid. It may have been used already, replaced by a newer one, or expired.",
 };
 
 function failure(result: Extract<AuthResult<unknown>, { ok: false }>): FormState {
@@ -93,6 +97,31 @@ export async function joinAction(_state: FormState, formData: FormData): Promise
   redirect("/household");
 }
 
+export type ResetPasswordState =
+  | (FormState & {
+      /** Set once the password has changed: the address to sign in as. */
+      readonly resetFor?: string;
+    })
+  | undefined;
+
+/**
+ * Spend a reset link. Signs nobody in — see `resetPassword` — so on success
+ * this hands back the address for the page to point at the login form, rather
+ * than redirecting somewhere that needs a session.
+ */
+export async function resetPasswordAction(
+  _state: ResetPasswordState,
+  formData: FormData,
+): Promise<ResetPasswordState> {
+  const result = await resetPassword({
+    resetToken: formData.get("resetToken"),
+    password: formData.get("password"),
+  });
+
+  if (!result.ok) return failure(result);
+  return { resetFor: result.value.email };
+}
+
 export async function logOutAction(): Promise<void> {
   await endSession();
   redirect("/login");
@@ -124,6 +153,34 @@ export async function createInviteAction(): Promise<InviteState> {
   const invite = await issueInvite(scope, session.userId);
 
   return { path: `/join/${invite.token}`, expiresAt: invite.expiresAt.toISOString() };
+}
+
+export type ResetLinkState =
+  | {
+      /** A path, for the reason `InviteState` gives. */
+      readonly path: string;
+      readonly expiresAt: string;
+    }
+  | { readonly refused: true }
+  | undefined;
+
+/**
+ * Issue a password reset link for another member of the household.
+ *
+ * `memberId` arrives from the client and is untrusted, as the hidden field on
+ * Remove is; who is asking comes off the session. A refusal (yourself, someone
+ * who joined before you, someone gone or in another household) is one answer,
+ * on the same terms as removing. The token goes into the returned path and
+ * nowhere else.
+ */
+export async function createPasswordResetAction(memberId: unknown): Promise<ResetLinkState> {
+  const session = await requireSession();
+  const scope = await requireScope();
+
+  const link = await issuePasswordReset(scope, session.userId, memberId);
+  if (link === undefined) return { refused: true };
+
+  return { path: `/reset/${link.token}`, expiresAt: link.expiresAt.toISOString() };
 }
 
 /**

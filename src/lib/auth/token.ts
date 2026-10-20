@@ -1,13 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 
 /**
- * Bearer secrets: session tokens and invite tokens.
+ * Bearer secrets: session tokens, invite tokens and password reset tokens.
  *
- * Both follow the same shape. The raw token is minted from a CSPRNG, handed to
- * exactly one place (a cookie, or the invite link the user shares out-of-band),
- * and never stored. What the database holds is `hashToken()` of it, so a
- * database read — a backup, a leaked dump, a `select *` in a log line — cannot
- * be replayed as a live session or a working invite.
+ * All follow the same shape. The raw token is minted from a CSPRNG, handed to
+ * exactly one place (a cookie, or a link the user shares out-of-band), and
+ * never stored. What the database holds is `hashToken()` of it, so a database
+ * read — a backup, a leaked dump, a `select *` in a log line — cannot be
+ * replayed as a live session, a working invite or a password reset.
  *
  * The hash is a plain SHA-256, deliberately, where `password.ts` uses a slow
  * KDF. A password is low-entropy and guessable, so the cost parameter is the
@@ -27,6 +27,14 @@ export const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
  * where a session token only ever sits in one browser.
  */
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Shorter again. A reset link travels the way an invite does, but it opens an
+ * account that already holds the household's data rather than one that does
+ * not exist yet. A day still leaves time to get it to someone over a channel
+ * slower than the one they are sitting in front of.
+ */
+export const PASSWORD_RESET_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** base64url so the value survives a URL path segment unescaped. */
 export function generateToken(): string {
