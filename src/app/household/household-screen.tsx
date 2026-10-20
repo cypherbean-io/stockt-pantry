@@ -9,6 +9,7 @@ import type { Member } from "@/db/queries/household";
 import type { InviteListing } from "@/db/queries/invites";
 
 import { InviteButton } from "./invite-button";
+import { ResetLinkButton } from "./reset-link-button";
 
 /**
  * What `/household` shows, given what `page.tsx` has already read. Split from
@@ -29,8 +30,9 @@ export function HouseholdScreen({
   readonly members: readonly Member[];
   readonly invites: readonly InviteListing[];
 }): ReactElement {
-  // Who may be removed is the action's call (`deleteMember`: only members who
-  // joined after you); this only decides which buttons to draw. A `Date` keeps
+  // Who may be removed, or have their password reset, is the action's call
+  // (`deleteMember`, `createPasswordReset`: only members who joined after
+  // you); this only decides which buttons to draw. A `Date` keeps
   // milliseconds where Postgres keeps microseconds, so two members who joined
   // in the same millisecond rank level here — which hides a button the action
   // would have honoured, never the reverse.
@@ -43,7 +45,10 @@ export function HouseholdScreen({
       <PageHeader title={householdName ?? "Household"} description={`Signed in as ${email}.`} />
 
       <div className="flex flex-col gap-8">
-        <Section title="Members" description="You can remove anyone who joined after you.">
+        <Section
+          title="Members"
+          description="You can reset the password of, or remove, anyone who joined after you."
+        >
           <ul className="divide-y divide-border rounded-card border border-border bg-surface-raised">
             {members.map((member) => (
               <li
@@ -55,7 +60,12 @@ export function HouseholdScreen({
                 {member.id === currentUserId && (
                   <span className="text-sm text-ink-muted">(you)</span>
                 )}
-                {removable(member) && <RemoveMember member={member} />}
+                {removable(member) && (
+                  <>
+                    <ResetPassword member={member} />
+                    <RemoveMember member={member} />
+                  </>
+                )}
               </li>
             ))}
           </ul>
@@ -109,6 +119,34 @@ export function HouseholdScreen({
   );
 }
 
+const SUMMARY =
+  "min-h-tap cursor-pointer rounded-card px-4 py-2.5 font-medium text-ink " +
+  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
+
+/**
+ * Behind a disclosure, as Remove is, so the explanation of what a link does
+ * is read before the button that makes one. There is no email to send it by
+ * (SPEC.md §2), so this is how a member who cannot sign in gets back in.
+ *
+ * Only the member's id goes to the action, which takes the caller off the
+ * session and refuses anyone this is not drawn for.
+ */
+function ResetPassword({ member }: { readonly member: Member }): ReactElement {
+  return (
+    <details className="w-full rounded-card border border-border">
+      <summary className={SUMMARY}>Reset password</summary>
+      <div className="flex flex-col items-start gap-3 border-t border-border p-4">
+        <p className="text-sm text-ink-muted">
+          For when they cannot sign in. Whoever opens the link chooses a new password for this
+          account. Every device signed in to it is signed out, and any invite or reset links it
+          made stop working. Making a new link cancels the last one.
+        </p>
+        <ResetLinkButton memberId={member.id} />
+      </div>
+    </details>
+  );
+}
+
 /**
  * Behind a disclosure, as deleting a recipe is, so removing someone is two
  * deliberate presses rather than one stray one. `w-full` puts it on its own
@@ -122,14 +160,7 @@ export function HouseholdScreen({
 function RemoveMember({ member }: { readonly member: Member }): ReactElement {
   return (
     <details className="w-full rounded-card border border-border">
-      <summary
-        className={
-          "min-h-tap cursor-pointer rounded-card px-4 py-2.5 font-medium text-ink " +
-          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-        }
-      >
-        Remove
-      </summary>
+      <summary className={SUMMARY}>Remove</summary>
       <form
         action={removeMemberAction}
         className="flex flex-col items-start gap-3 border-t border-border p-4"

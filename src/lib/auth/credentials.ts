@@ -145,6 +145,17 @@ export function parseCredentials(input: {
   };
 }
 
+/**
+ * The password half of `parseCredentials`, for a reset link, which sets a
+ * password on an account that already has an address. Same policy, so a reset
+ * is not a way round signup's floor; untrimmed for the same reason.
+ */
+export function parseNewPassword(input: unknown): Parsed<string> {
+  const error = passwordError(input);
+  if (error !== undefined) return { ok: false, errors: { password: error } };
+  return { ok: true, value: input as string };
+}
+
 export function parseHouseholdName(input: unknown): Parsed<string> {
   if (typeof input !== "string" || input.trim() === "") {
     return { ok: false, errors: { householdName: "Name your household." } };

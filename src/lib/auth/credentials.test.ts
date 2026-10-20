@@ -7,6 +7,7 @@ import {
   couldBeAccountEmail,
   parseCredentials,
   parseHouseholdName,
+  parseNewPassword,
 } from "./credentials";
 
 /**
@@ -122,6 +123,30 @@ describe("parseCredentials", () => {
     // FormData.get() is typed `FormDataEntryValue | null`, and a crafted body
     // can send repeats or a file for any field.
     expect(errorsFor({ email, password: VALID.password })).toHaveProperty("email");
+  });
+});
+
+describe("parseNewPassword", () => {
+  // A reset link sets a password with no address alongside it, so this is the
+  // password half of `parseCredentials` on its own — the same policy, or a
+  // reset becomes the way round signup's floor.
+
+  it("accepts a password of exactly the minimum length, untrimmed", () => {
+    const password = ` ${"a".repeat(MIN_PASSWORD_LENGTH - 2)} `;
+
+    expect(parseNewPassword(password)).toEqual({ ok: true, value: password });
+  });
+
+  it.each([
+    ["shorter than the minimum", "a".repeat(MIN_PASSWORD_LENGTH - 1)],
+    ["longer than the maximum", "a".repeat(MAX_PASSWORD_LENGTH + 1)],
+    ["missing from the form body", null],
+    ["a file upload", new Blob([])],
+  ])("rejects a password %s as a password field error", (_label, password) => {
+    const parsed = parseNewPassword(password);
+
+    expect(parsed.ok).toBe(false);
+    expect(!parsed.ok && Object.keys(parsed.errors)).toEqual(["password"]);
   });
 });
 

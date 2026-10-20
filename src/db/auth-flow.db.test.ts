@@ -1,7 +1,7 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { invite, session, user } from "./schema";
+import { invite, passwordReset, session, user } from "./schema";
 import { scopeForSession, unsafeHouseholdScopeFromId } from "./scope";
 import { listMembers } from "./queries/household";
 import { listInvites } from "./queries/invites";
@@ -10,10 +10,13 @@ import {
   authenticate,
   inviteIsOpen,
   issueInvite,
+  issueResetLink,
   joinWithInvite,
   logIn,
   logOut,
+  passwordResetFor,
   removeMember,
+  resetPassword,
   revokeInvite,
   signUpHousehold,
   type AuthResult,
@@ -23,8 +26,10 @@ import type { AuthEnv } from "@/lib/auth/env";
 import { hashToken } from "@/lib/auth/token";
 import {
   createHouseholdWithOwner,
+  createSession,
   findUserCredentialsByEmail,
   redeemInviteIntoNewUser,
+  redeemPasswordReset,
 } from "./queries/auth";
 
 /**
@@ -362,6 +367,29 @@ describe("invites", () => {
   });
 });
 
+/**
+ * Resolves once `pending` has settled, or once Postgres reports a backend
+ * waiting on a row lock — whichever comes first. The DB test files run one at
+ * a time, so a lock wait in this database is the statement under test. What
+ * the caller asserts afterwards does not depend on how long either took.
+ */
+async function settledOrWaitingOnALock(pending: Promise<unknown>): Promise<void> {
+  let settled = false;
+  pending.then(
+    () => (settled = true),
+    () => (settled = true),
+  );
+
+  while (!settled) {
+    const [row] = await db.execute<{ waiting: number }>(
+      sql`select count(*)::int as waiting from pg_stat_activity
+          where datname = current_database() and wait_event_type = 'Lock'`,
+    );
+    if ((row?.waiting ?? 0) > 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 function scopeOf(member: { readonly householdId: string }) {
   return unsafeHouseholdScopeFromId(member.householdId);
 }
@@ -566,6 +594,384 @@ describe("revoking an invite", () => {
   });
 });
 
+describe("password reset links", () => {
+  const NEW_PASSWORD = "an entirely different passphrase";
+
+  /** `owner` and a member who joined after them, with a link `owner` issued for that member. */
+  async function ownerAndResetLink() {
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const second = await inviteMember(owner, "second@alpha.example");
+    const link = await issueResetLink(scopeOf(owner), owner.userId, second.userId, {
+      now: T0,
+    });
+    if (link === undefined) throw new Error("expected a reset link to be issued");
+    return { owner, second, link };
+  }
+
+  it("lets the member sign in with the new password and not the old one", async () => {
+    const { link } = await ownerAndResetLink();
+
+    const result = await resetPassword(
+      { resetToken: link.token, password: NEW_PASSWORD },
+      { now: T0 },
+    );
+
+    expect(result).toEqual({ ok: true, value: { email: "second@alpha.example" } });
+    expect(
+      (await logIn({ email: "second@alpha.example", password: NEW_PASSWORD }, { now: T0 })).ok,
+    ).toBe(true);
+    expect(
+      await logIn({ email: "second@alpha.example", password: PASSWORD }, { now: T0 }),
+    ).toEqual({ ok: false, error: "invalid-credentials" });
+  });
+
+  it("signs the member out on every device", async () => {
+    // A reset is as often "someone else may have my password" as "I forgot
+    // it", and the first only ends when the sessions they hold do.
+    const { second, link } = await ownerAndResetLink();
+    const otherDevice = issued(
+      await logIn({ email: "second@alpha.example", password: PASSWORD }, { now: T0 }),
+    );
+
+    await resetPassword({ resetToken: link.token, password: NEW_PASSWORD }, { now: T0 });
+
+    expect(await authenticate(second.token, { now: T0 })).toBeUndefined();
+    expect(await authenticate(otherDevice.token, { now: T0 })).toBeUndefined();
+  });
+
+  it("stops the reset links the member had issued from working", async () => {
+    // Whoever held the old password could have minted these, and nothing
+    // lists them — a reset that left them working would recover nothing.
+    // Removal already takes them, through the `created_by` cascade.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const second = await inviteMember(owner, "second@alpha.example");
+    const third = await inviteMember(owner, "third@alpha.example");
+    const minted = await issueResetLink(scopeOf(owner), second.userId, third.userId, {
+      now: T0,
+    });
+    const link = await issueResetLink(scopeOf(owner), owner.userId, second.userId, {
+      now: T0,
+    });
+
+    await resetPassword({ resetToken: link!.token, password: NEW_PASSWORD }, { now: T0 });
+
+    expect(await passwordResetFor(minted!.token, { now: T0 })).toBeUndefined();
+  });
+
+  it("stops the open invites the member had issued from letting anyone in", async () => {
+    const { owner, second, link } = await ownerAndResetLink();
+    const { token } = await issueInvite(scopeOf(owner), second.userId, { now: T0 });
+
+    await resetPassword({ resetToken: link.token, password: NEW_PASSWORD }, { now: T0 });
+
+    expect(await inviteIsOpen(token, { now: T0 })).toBe(false);
+  });
+
+  it("leaves the invites the member issued that were already used on the record", async () => {
+    // Revoking a used invite un-joins nobody, and the list is how the
+    // household sees who came in through whom.
+    const { owner, second, link } = await ownerAndResetLink();
+    const { token, inviteId } = await issueInvite(scopeOf(owner), second.userId, { now: T0 });
+    await joinWithInvite(
+      { inviteToken: token, email: "third@alpha.example", password: PASSWORD },
+      { now: T0 },
+    );
+
+    await resetPassword({ resetToken: link.token, password: NEW_PASSWORD }, { now: T0 });
+
+    expect((await listInvites(scopeOf(owner))).map((row) => row.id)).toContain(inviteId);
+  });
+
+  it("opens no session for a sign-in whose password was replaced while it was checked", async () => {
+    // `logIn` reads the hash, spends ~250ms verifying against it, then opens
+    // the session. A reset landing in between has already deleted every
+    // session it can see, so the one opened afterwards has to be refused on
+    // the hash it was verified against — or it outlives the reset.
+    const { second, link } = await ownerAndResetLink();
+    const verified = (await findUserCredentialsByEmail("second@alpha.example"))!.passwordHash;
+
+    await resetPassword({ resetToken: link.token, password: NEW_PASSWORD }, { now: T0 });
+
+    expect(
+      await createSession({
+        tokenHash: "hash-of-a-late-sign-in",
+        userId: second.userId,
+        householdId: second.householdId,
+        expiresAt: after(30),
+        passwordHash: verified,
+      }),
+    ).toBe(false);
+    expect(
+      await db.select().from(session).where(eq(session.tokenHash, "hash-of-a-late-sign-in")),
+    ).toHaveLength(0);
+  });
+
+  it("makes a sign-in wait for a password change in flight rather than read past it", async () => {
+    // The same race with the reset still uncommitted. Read past it, the
+    // sign-in sees the old hash and opens a session after the reset's delete
+    // has run. Waiting on the row, it sees the new one and opens nothing.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const verified = (await findUserCredentialsByEmail("owner@alpha.example"))!.passwordHash;
+
+    let signIn: Promise<boolean> | undefined;
+    await db.transaction(async (tx) => {
+      await tx
+        .update(user)
+        // Not a credential: a stand-in for the hash a reset would write.
+        .set({ passwordHash: "placeholder-not-a-real-hash" })
+        .where(eq(user.id, owner.userId));
+
+      signIn = createSession({
+        tokenHash: "hash-of-a-racing-sign-in",
+        userId: owner.userId,
+        householdId: owner.householdId,
+        expiresAt: after(30),
+        passwordHash: verified,
+      });
+      await settledOrWaitingOnALock(signIn);
+    });
+
+    expect(await signIn).toBe(false);
+  });
+
+  it("does not sign anyone in", async () => {
+    // The member signs in through the login form like any other time, so a
+    // link is never a way to obtain a session directly.
+    const { second, link } = await ownerAndResetLink();
+
+    await resetPassword({ resetToken: link.token, password: NEW_PASSWORD }, { now: T0 });
+
+    expect(
+      await db.select().from(session).where(sql`${session.userId} = ${second.userId}`),
+    ).toHaveLength(0);
+  });
+
+  it("leaves every other member's password and sessions alone", async () => {
+    const { owner, link } = await ownerAndResetLink();
+
+    await resetPassword({ resetToken: link.token, password: NEW_PASSWORD }, { now: T0 });
+
+    expect(await authenticate(owner.token, { now: T0 })).toBeDefined();
+    expect(
+      (await logIn({ email: "owner@alpha.example", password: PASSWORD }, { now: T0 })).ok,
+    ).toBe(true);
+  });
+
+  it("works exactly once", async () => {
+    const { link } = await ownerAndResetLink();
+
+    const first = await resetPassword(
+      { resetToken: link.token, password: NEW_PASSWORD },
+      { now: T0 },
+    );
+    const second = await resetPassword(
+      { resetToken: link.token, password: "a third passphrase, also long" },
+      { now: T0 },
+    );
+
+    expect(first.ok).toBe(true);
+    expect(second).toEqual({ ok: false, error: "reset-invalid" });
+    expect(
+      (await logIn({ email: "second@alpha.example", password: NEW_PASSWORD }, { now: T0 })).ok,
+    ).toBe(true);
+  });
+
+  it("lets exactly one of two simultaneous redemptions through", async () => {
+    const { link } = await ownerAndResetLink();
+
+    const results = await Promise.all([
+      resetPassword({ resetToken: link.token, password: NEW_PASSWORD }, { now: T0 }),
+      resetPassword(
+        { resetToken: link.token, password: "a third passphrase, also long" },
+        { now: T0 },
+      ),
+    ]);
+
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+  });
+
+  it("lasts a day, not the week an invite does", async () => {
+    // It is a working credential for an account that already holds the
+    // household's data, carried over whatever channel the issuer picked.
+    const { link } = await ownerAndResetLink();
+
+    expect(link.expiresAt).toEqual(after(1));
+  });
+
+  it("is rejected once it has expired", async () => {
+    const { link } = await ownerAndResetLink();
+
+    const late = new Date(link.expiresAt.getTime() + 1000);
+    const result = await resetPassword(
+      { resetToken: link.token, password: NEW_PASSWORD },
+      { now: late },
+    );
+
+    expect(result).toEqual({ ok: false, error: "reset-invalid" });
+    expect(
+      (await logIn({ email: "second@alpha.example", password: PASSWORD }, { now: T0 })).ok,
+    ).toBe(true);
+  });
+
+  it.each([
+    ["a token that was never issued", "made-up-token"],
+    ["an empty token", ""],
+    ["a missing field", null],
+  ])("rejects %s", async (_label, resetToken) => {
+    await ownerAndResetLink();
+
+    expect(await resetPassword({ resetToken, password: NEW_PASSWORD }, { now: T0 })).toEqual({
+      ok: false,
+      error: "reset-invalid",
+    });
+  });
+
+  it("is not consumed by a new password that is too short", async () => {
+    // Burning the link on a typo would leave the member with no password and
+    // no way to set one until somebody issues another.
+    const { link } = await ownerAndResetLink();
+
+    const short = await resetPassword({ resetToken: link.token, password: "short" }, { now: T0 });
+    expect(short.ok).toBe(false);
+    expect(!short.ok && short.error).toBe("invalid-input");
+    expect(!short.ok && Object.keys(short.fieldErrors ?? {})).toEqual(["password"]);
+
+    const retry = await resetPassword(
+      { resetToken: link.token, password: NEW_PASSWORD },
+      { now: T0 },
+    );
+    expect(retry.ok).toBe(true);
+  });
+
+  it("stores only the hash of the token it hands out", async () => {
+    const { link } = await ownerAndResetLink();
+
+    const [row] = await db.select().from(passwordReset);
+    expect(row?.tokenHash).not.toBe(link.token);
+    expect(row?.tokenHash).toBe(hashToken(link.token));
+  });
+
+  it("names the account it is for while it is open, and nothing after", async () => {
+    // The reset page says whose password is about to change. A used link
+    // answers like one that never existed.
+    const { link } = await ownerAndResetLink();
+
+    expect(await passwordResetFor(link.token, { now: T0 })).toEqual({
+      email: "second@alpha.example",
+    });
+
+    await resetPassword({ resetToken: link.token, password: NEW_PASSWORD }, { now: T0 });
+
+    expect(await passwordResetFor(link.token, { now: T0 })).toBeUndefined();
+    expect(await passwordResetFor("", { now: T0 })).toBeUndefined();
+  });
+
+  it("replaces the member's earlier link when another is issued", async () => {
+    // Issuing again is how a link pasted into the wrong chat gets withdrawn,
+    // so a member never has more than one that works.
+    const { owner, second, link: first } = await ownerAndResetLink();
+    const replacement = await issueResetLink(scopeOf(owner), owner.userId, second.userId, {
+      now: T0,
+    });
+
+    expect(
+      await resetPassword({ resetToken: first.token, password: NEW_PASSWORD }, { now: T0 }),
+    ).toEqual({ ok: false, error: "reset-invalid" });
+    expect(
+      (
+        await resetPassword(
+          { resetToken: replacement!.token, password: NEW_PASSWORD },
+          { now: T0 },
+        )
+      ).ok,
+    ).toBe(true);
+    expect(await db.select().from(passwordReset)).toHaveLength(0);
+  });
+
+  it("keeps one link per member, not one per household", async () => {
+    const { owner, link } = await ownerAndResetLink();
+    const third = await inviteMember(owner, "third@alpha.example");
+    await issueResetLink(scopeOf(owner), owner.userId, third.userId, { now: T0 });
+
+    expect(await passwordResetFor(link.token, { now: T0 })).toBeDefined();
+  });
+
+  it("refuses to issue a link for the member who is asking", async () => {
+    // Changing your own password is a different feature; this one exists for
+    // the member who cannot sign in.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+
+    expect(
+      await issueResetLink(scopeOf(owner), owner.userId, owner.userId, { now: T0 }),
+    ).toBeUndefined();
+    expect(
+      await issueResetLink(scopeOf(owner), owner.userId, owner.userId.toUpperCase(), {
+        now: T0,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("refuses to issue a link for a member who joined before the one asking", async () => {
+    // A link is a way into the account it names. The same seniority that
+    // decides who may remove whom keeps a leaked invite from becoming the
+    // founder's account, and with it the power to remove everyone else.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const second = await inviteMember(owner, "second@alpha.example");
+
+    expect(
+      await issueResetLink(scopeOf(owner), second.userId, owner.userId, { now: T0 }),
+    ).toBeUndefined();
+    expect(await db.select().from(passwordReset)).toHaveLength(0);
+  });
+
+  it("refuses a link asked for by a member who has already been removed", async () => {
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const second = await inviteMember(owner, "second@alpha.example");
+    const third = await inviteMember(owner, "third@alpha.example");
+    await removeMember(scopeOf(owner), owner.userId, second.userId);
+
+    expect(
+      await issueResetLink(scopeOf(owner), second.userId, third.userId, { now: T0 }),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    ["a malformed id", "not-a-uuid"],
+    ["a missing field", null],
+  ])("answers undefined, without throwing, for %s", async (_label, memberId) => {
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    await inviteMember(owner, "second@alpha.example");
+
+    expect(
+      await issueResetLink(scopeOf(owner), owner.userId, memberId, { now: T0 }),
+    ).toBeUndefined();
+  });
+
+  it("stops working when the member who issued it is removed", async () => {
+    // As with invites: removing someone withdraws what they handed out.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const second = await inviteMember(owner, "second@alpha.example");
+    const third = await inviteMember(owner, "third@alpha.example");
+    const link = await issueResetLink(scopeOf(owner), second.userId, third.userId, {
+      now: T0,
+    });
+
+    await removeMember(scopeOf(owner), owner.userId, second.userId);
+
+    expect(await passwordResetFor(link!.token, { now: T0 })).toBeUndefined();
+  });
+
+  it("stops working when the member it was for is removed", async () => {
+    const { owner, second, link } = await ownerAndResetLink();
+
+    await removeMember(scopeOf(owner), owner.userId, second.userId);
+
+    expect(
+      await resetPassword({ resetToken: link.token, password: NEW_PASSWORD }, { now: T0 }),
+    ).toEqual({ ok: false, error: "reset-invalid" });
+  });
+});
+
 describe("unexpected database errors", () => {
   /**
    * CLAUDE.md: a `DrizzleQueryError` stringifies as
@@ -621,6 +1027,32 @@ describe("unexpected database errors", () => {
 
     expect(error.message).not.toContain("params:");
     expect(error.message).toContain("22021");
+  });
+
+  it("does not carry bound parameters out of a password reset failure", async () => {
+    // The bound values here are the new password hash and the link's token
+    // hash — one of them a working credential until the transaction commits.
+    const owner = await signUpOwner("Alpha", "owner@alpha.example");
+    const second = await inviteMember(owner, "second@alpha.example");
+    const link = await issueResetLink(scopeOf(owner), owner.userId, second.userId, {
+      now: T0,
+    });
+
+    const error = await rejection(
+      redeemPasswordReset({
+        tokenHash: hashToken(link!.token),
+        passwordHash: `scrypt$16384$8$1$c2FsdA$${MARKER}${"\u0000"}`,
+        now: T0,
+      }),
+    );
+
+    expect(error.message).not.toContain(MARKER);
+    expect(error.message).not.toContain(hashToken(link!.token));
+    expect(error.message).not.toContain("params:");
+    expect(error.message).toContain("22021");
+    // Rolled back, so the link still works and the old password still does.
+    expect(await passwordResetFor(link!.token, { now: T0 })).toBeDefined();
+    expect(await authenticate(second.token, { now: T0 })).toBeDefined();
   });
 
   it("keeps the rolled-back invite usable after a rejected redemption", async () => {

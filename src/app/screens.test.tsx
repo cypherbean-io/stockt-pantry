@@ -15,6 +15,7 @@ import { HouseholdScreen } from "./household/household-screen";
 import { IssuedInvite } from "./household/invite-button";
 import { JoinForm } from "./join/[token]/join-form";
 import LoginPage from "./login/page";
+import { ResetForm } from "./reset/[token]/reset-form";
 import { PantryScreen } from "./pantry/pantry-screen";
 import { RecipeScreen } from "./recipes/[id]/recipe-screen";
 import { RecipeForm } from "./recipes/_components/recipe-form";
@@ -175,6 +176,7 @@ const SCREENS: ReadonlyArray<readonly [string, ReactElement]> = [
   ["/login", <LoginPage key="login" />],
   ["/signup", <SignupPage key="signup" />],
   ["/join/[token] form", <JoinForm key="join" token="f00dcafe" />],
+  ["/reset/[token] form", <ResetForm key="reset" token="f00dcafe" />],
   ["/recipes", <RecipeListScreen key="recipes" entries={ENTRIES} pantryIsEmpty={false} />],
   ["/recipes, empty pantry", <RecipeListScreen key="empty-pantry" entries={ENTRIES} pantryIsEmpty />],
   ["/recipes, no recipes", <RecipeListScreen key="no-recipes" entries={[]} pantryIsEmpty />],
@@ -675,6 +677,39 @@ describe("/household", () => {
 
   it("names the member on the button that removes them", () => {
     expect(markup).toContain("Yes, remove a-much-longer-address-than-usual@example.test");
+  });
+
+  /** Each member's row, keyed by the address it shows. */
+  function rows(): ReadonlyMap<string, string> {
+    return new Map(
+      [...markup.matchAll(/<li\b.*?<\/li>/gs)].map((match) => {
+        const row = match[0];
+        return [/[\w.-]+@example\.test/.exec(row)?.[0] ?? "", row];
+      }),
+    );
+  }
+
+  it("offers a reset link only for the members who joined after the one signed in", () => {
+    // The action refuses yourself and anyone senior to you, on the same terms
+    // as removal: a reset link is a way into the account it names.
+    const offered = [...rows()]
+      .filter(([, row]) => /<summary\b[^>]*>Reset password<\/summary>/.test(row))
+      .map(([email]) => email);
+
+    expect(offered).toEqual(["a-much-longer-address-than-usual@example.test"]);
+  });
+
+  it("asks before generating a reset link", () => {
+    // Two deliberate presses: the explanation of what a link does sits
+    // between the first and the button that makes one.
+    const disclosures = [...markup.matchAll(/<details\b.*?<\/details>/gs)].map((match) => match[0]);
+    const reset = disclosures.filter((block) =>
+      /<summary\b[^>]*>Reset password<\/summary>/.test(block),
+    );
+
+    expect(reset).toHaveLength(1);
+    expect(reset[0]).toContain("Generate a reset link");
+    expect(markup.match(/Generate a reset link/g)).toHaveLength(1);
   });
 
   it("offers to revoke the open invite and no other", () => {

@@ -121,6 +121,9 @@ const SIGNED_OUT = new Set([
   "login/page.tsx",
   "signup/page.tsx",
   "join/[token]/page.tsx",
+  // Keyed by the link's own token: the person holding it cannot sign in,
+  // which is why they have it.
+  "reset/[token]/page.tsx",
 ]);
 
 const GUARDED = PAGES.filter(({ path }) => !SIGNED_OUT.has(path));
