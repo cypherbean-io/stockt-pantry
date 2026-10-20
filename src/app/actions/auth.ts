@@ -15,6 +15,7 @@ import {
 } from "@/lib/auth/service";
 import { endSession, requireScope, requireSession, startSession } from "@/lib/auth/session";
 import type { FieldErrors } from "@/lib/auth/credentials";
+import { LOGIN_WINDOW_MS } from "@/lib/auth/throttle";
 
 /**
  * Server actions for the auth forms.
@@ -40,6 +41,11 @@ const MESSAGES: Record<AuthError, string> = {
   "invalid-signup-token": "That signup token is not valid for this deployment.",
   "email-taken": "That email address already has an account.",
   "invalid-credentials": "That email address and password do not match an account.",
+  // Says nothing about whether the account exists: unknown addresses are
+  // throttled on the same count (see `logIn`).
+  "too-many-attempts": `Too many sign-in attempts for that email address. Wait up to ${
+    LOGIN_WINDOW_MS / 60_000
+  } minutes, then try again.`,
   "invite-invalid": "This invite link is not valid. It may have been used already, or expired.",
 };
 

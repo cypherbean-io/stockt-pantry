@@ -68,6 +68,34 @@ function emailError(value: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * Whether a login attempt's address could belong to any account at all — so
+ * `logIn` can refuse it before it is counted, stored or hashed against.
+ *
+ * Deliberately far looser than `emailError`, and it must stay that way. This
+ * runs at *login*, where tightening it locks out every account created before
+ * the change (the reason `logIn` does not apply `MIN_PASSWORD_LENGTH`). It
+ * holds only what every account has passed since the first signup (f159de4):
+ * at most `MAX_EMAIL_LENGTH`, no whitespace, no control or format characters,
+ * and exactly one `@` with something either side. SQL `lower()` maps one
+ * codepoint to one and adds or removes none of these, so no spelling of a real
+ * address fails it.
+ *
+ * The control characters matter beyond tidiness: a NUL reaching Postgres is
+ * SQLSTATE 22021 and a 500 from an unauthenticated form.
+ */
+export function couldBeAccountEmail(email: string): boolean {
+  const parts = email.split("@");
+  return (
+    email.length <= MAX_EMAIL_LENGTH &&
+    !/\s/.test(email) &&
+    !/[\p{Cc}\p{Cf}]/u.test(email) &&
+    parts.length === 2 &&
+    parts[0] !== "" &&
+    parts[1] !== ""
+  );
+}
+
 function passwordError(value: unknown): string | undefined {
   if (typeof value !== "string") return "Enter a password.";
   if (value.length < MIN_PASSWORD_LENGTH) {

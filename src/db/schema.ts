@@ -153,6 +153,33 @@ export const session = pgTable(
 );
 
 /**
+ * Password checks spent per address in the current window (see
+ * `src/lib/auth/throttle.ts` for the policy).
+ *
+ * Not tenant data and not tied to `user`: the address does not have to belong
+ * to anyone, or the throttle would say which ones do. So nothing here cascades
+ * from `household`, and `resetDatabase` truncates it by name.
+ */
+export const loginThrottle = pgTable(
+  "login_throttle",
+  {
+    /**
+     * SHA-256 of the address as SQL `lower()` normalises it, never the address.
+     * What that does and does not protect is at `throttleKey` in
+     * `queries/auth.ts`.
+     */
+    keyHash: text("key_hash").primaryKey(),
+    attempts: integer("attempts").notNull(),
+    windowStartedAt: timestamp("window_started_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("login_throttle_attempts_positive", sql`${table.attempts} > 0`),
+    // Every login attempt sweeps expired rows by this column.
+    index("login_throttle_window_idx").on(table.windowStartedAt),
+  ],
+);
+
+/**
  * Units are deployment-wide reference data, not tenant data — there is nothing
  * household-specific about a gram. The primary key is the unit's key rather
  * than a surrogate id so the rows line up with `UNITS` in
@@ -273,6 +300,7 @@ export type HouseholdRow = typeof household.$inferSelect;
 export type UserRow = typeof user.$inferSelect;
 export type InviteRow = typeof invite.$inferSelect;
 export type SessionRow = typeof session.$inferSelect;
+export type LoginThrottleRow = typeof loginThrottle.$inferSelect;
 export type UnitRow = typeof unit.$inferSelect;
 export type IngredientRow = typeof ingredient.$inferSelect;
 export type PantryItemRow = typeof pantryItem.$inferSelect;

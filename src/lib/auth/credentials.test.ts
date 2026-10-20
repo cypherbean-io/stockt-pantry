@@ -4,6 +4,7 @@ import {
   MAX_EMAIL_LENGTH,
   MAX_PASSWORD_LENGTH,
   MIN_PASSWORD_LENGTH,
+  couldBeAccountEmail,
   parseCredentials,
   parseHouseholdName,
 } from "./credentials";
@@ -139,5 +140,35 @@ describe("parseHouseholdName", () => {
 
   it("rejects an unreasonably long name", () => {
     expect(parseHouseholdName("x".repeat(1000)).ok).toBe(false);
+  });
+});
+
+describe("couldBeAccountEmail", () => {
+  it("accepts every address signup accepts, whatever its case", () => {
+    for (const email of ["cook@example.com", "Cook.Name+tag@Example.COM", "ünïcode@bücher.example"]) {
+      expect(parseCredentials({ ...VALID, email }).ok).toBe(true);
+      expect(couldBeAccountEmail(email)).toBe(true);
+    }
+  });
+
+  it("accepts an address at the length limit", () => {
+    const longest = `${"a".repeat(MAX_EMAIL_LENGTH - "@example.com".length)}@example.com`;
+
+    expect(couldBeAccountEmail(longest)).toBe(true);
+  });
+
+  it("refuses what no account can have been created with", () => {
+    // Most often a password typed into the email field: it has no `@`.
+    expect(couldBeAccountEmail("correct horse battery staple")).toBe(false);
+    expect(couldBeAccountEmail("two@at@signs.example")).toBe(false);
+    expect(couldBeAccountEmail("@example.com")).toBe(false);
+    expect(couldBeAccountEmail("cook@")).toBe(false);
+    expect(couldBeAccountEmail(`${"a".repeat(MAX_EMAIL_LENGTH)}@example.com`)).toBe(false);
+  });
+
+  it("refuses the whitespace and control characters signup has never let through", () => {
+    expect(couldBeAccountEmail("co ok@example.com")).toBe(false);
+    expect(couldBeAccountEmail("cook\u0000@example.com")).toBe(false);
+    expect(couldBeAccountEmail("co\u200dok@example.com")).toBe(false);
   });
 });

@@ -9,17 +9,24 @@ import {
   findSessionByTokenHash,
   findUserCredentialsByEmail,
   inviteIsRedeemable,
+  recordLoginAttempt,
   redeemInviteIntoNewUser,
 } from "@/db/queries/auth";
 import { deleteMember } from "@/db/queries/household";
 import { createInvite, deleteInvite } from "@/db/queries/invites";
 import type { HouseholdScope, VerifiedSession } from "@/db/scope";
 
-import { MAX_PASSWORD_LENGTH, parseCredentials, parseHouseholdName } from "./credentials";
+import {
+  MAX_PASSWORD_LENGTH,
+  couldBeAccountEmail,
+  parseCredentials,
+  parseHouseholdName,
+} from "./credentials";
 import type { FieldErrors } from "./credentials";
 import type { AuthEnv } from "./env";
 import { hashPassword, verifyPassword } from "./password";
 import { signupTokenAccepted } from "./signup-token";
+import { loginAttemptAllowed, loginWindowCutoff } from "./throttle";
 import { INVITE_TTL_MS, SESSION_TTL_MS, expiresAt, generateToken, hashToken } from "./token";
 
 /**
@@ -37,6 +44,7 @@ export type AuthError =
   | "invalid-signup-token"
   | "email-taken"
   | "invalid-credentials"
+  | "too-many-attempts"
   | "invite-invalid";
 
 export type AuthResult<T> =
@@ -155,6 +163,14 @@ export async function signUpHousehold(
  * Note also what is *not* applied here: `MIN_PASSWORD_LENGTH`. Signup policy
  * belongs at signup — enforcing it at login would lock out every account
  * created before the policy was last raised.
+ *
+ * `too-many-attempts` is the one failure that says something different, and it
+ * can afford to: it is keyed by the address as typed, before anything looks the
+ * address up, so it arrives on the same attempt and as fast for an address
+ * nobody has as for one somebody does. A correct password does not get past
+ * it — that is the attempt the throttle exists to stop — and does not reset
+ * the count either: only a real account can sign in, so a count that dropped
+ * would tell anyone probing it that the address exists.
  */
 export async function logIn(
   input: { readonly email: unknown; readonly password: unknown },
@@ -164,8 +180,21 @@ export async function logIn(
 
   const email = typeof input.email === "string" ? input.email.trim() : "";
   const password = typeof input.password === "string" ? input.password : "";
-  if (email === "" || password === "" || password.length > MAX_PASSWORD_LENGTH) {
+  // `couldBeAccountEmail` before anything is counted or stored: an address no
+  // account can have is most often a password typed into the wrong field.
+  if (
+    !couldBeAccountEmail(email) ||
+    password === "" ||
+    password.length > MAX_PASSWORD_LENGTH
+  ) {
     return { ok: false, error: "invalid-credentials" };
+  }
+
+  // Counted before the lookup and before the KDF, for the reason the signup
+  // token is checked first: a refused attempt should cost no hashing.
+  const attempts = await recordLoginAttempt(email, { now, windowCutoff: loginWindowCutoff(now) });
+  if (!loginAttemptAllowed(attempts)) {
+    return { ok: false, error: "too-many-attempts" };
   }
 
   const found = await findUserCredentialsByEmail(email);
