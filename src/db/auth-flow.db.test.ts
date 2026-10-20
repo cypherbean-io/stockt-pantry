@@ -10,7 +10,7 @@ import {
   authenticate,
   inviteIsOpen,
   issueInvite,
-  issuePasswordReset,
+  issueResetLink,
   joinWithInvite,
   logIn,
   logOut,
@@ -601,7 +601,7 @@ describe("password reset links", () => {
   async function ownerAndResetLink() {
     const owner = await signUpOwner("Alpha", "owner@alpha.example");
     const second = await inviteMember(owner, "second@alpha.example");
-    const link = await issuePasswordReset(scopeOf(owner), owner.userId, second.userId, {
+    const link = await issueResetLink(scopeOf(owner), owner.userId, second.userId, {
       now: T0,
     });
     if (link === undefined) throw new Error("expected a reset link to be issued");
@@ -646,10 +646,10 @@ describe("password reset links", () => {
     const owner = await signUpOwner("Alpha", "owner@alpha.example");
     const second = await inviteMember(owner, "second@alpha.example");
     const third = await inviteMember(owner, "third@alpha.example");
-    const minted = await issuePasswordReset(scopeOf(owner), second.userId, third.userId, {
+    const minted = await issueResetLink(scopeOf(owner), second.userId, third.userId, {
       now: T0,
     });
-    const link = await issuePasswordReset(scopeOf(owner), owner.userId, second.userId, {
+    const link = await issueResetLink(scopeOf(owner), owner.userId, second.userId, {
       now: T0,
     });
 
@@ -870,7 +870,7 @@ describe("password reset links", () => {
     // Issuing again is how a link pasted into the wrong chat gets withdrawn,
     // so a member never has more than one that works.
     const { owner, second, link: first } = await ownerAndResetLink();
-    const replacement = await issuePasswordReset(scopeOf(owner), owner.userId, second.userId, {
+    const replacement = await issueResetLink(scopeOf(owner), owner.userId, second.userId, {
       now: T0,
     });
 
@@ -891,7 +891,7 @@ describe("password reset links", () => {
   it("keeps one link per member, not one per household", async () => {
     const { owner, link } = await ownerAndResetLink();
     const third = await inviteMember(owner, "third@alpha.example");
-    await issuePasswordReset(scopeOf(owner), owner.userId, third.userId, { now: T0 });
+    await issueResetLink(scopeOf(owner), owner.userId, third.userId, { now: T0 });
 
     expect(await passwordResetFor(link.token, { now: T0 })).toBeDefined();
   });
@@ -902,10 +902,10 @@ describe("password reset links", () => {
     const owner = await signUpOwner("Alpha", "owner@alpha.example");
 
     expect(
-      await issuePasswordReset(scopeOf(owner), owner.userId, owner.userId, { now: T0 }),
+      await issueResetLink(scopeOf(owner), owner.userId, owner.userId, { now: T0 }),
     ).toBeUndefined();
     expect(
-      await issuePasswordReset(scopeOf(owner), owner.userId, owner.userId.toUpperCase(), {
+      await issueResetLink(scopeOf(owner), owner.userId, owner.userId.toUpperCase(), {
         now: T0,
       }),
     ).toBeUndefined();
@@ -919,7 +919,7 @@ describe("password reset links", () => {
     const second = await inviteMember(owner, "second@alpha.example");
 
     expect(
-      await issuePasswordReset(scopeOf(owner), second.userId, owner.userId, { now: T0 }),
+      await issueResetLink(scopeOf(owner), second.userId, owner.userId, { now: T0 }),
     ).toBeUndefined();
     expect(await db.select().from(passwordReset)).toHaveLength(0);
   });
@@ -931,7 +931,7 @@ describe("password reset links", () => {
     await removeMember(scopeOf(owner), owner.userId, second.userId);
 
     expect(
-      await issuePasswordReset(scopeOf(owner), second.userId, third.userId, { now: T0 }),
+      await issueResetLink(scopeOf(owner), second.userId, third.userId, { now: T0 }),
     ).toBeUndefined();
   });
 
@@ -943,7 +943,7 @@ describe("password reset links", () => {
     await inviteMember(owner, "second@alpha.example");
 
     expect(
-      await issuePasswordReset(scopeOf(owner), owner.userId, memberId, { now: T0 }),
+      await issueResetLink(scopeOf(owner), owner.userId, memberId, { now: T0 }),
     ).toBeUndefined();
   });
 
@@ -952,7 +952,7 @@ describe("password reset links", () => {
     const owner = await signUpOwner("Alpha", "owner@alpha.example");
     const second = await inviteMember(owner, "second@alpha.example");
     const third = await inviteMember(owner, "third@alpha.example");
-    const link = await issuePasswordReset(scopeOf(owner), second.userId, third.userId, {
+    const link = await issueResetLink(scopeOf(owner), second.userId, third.userId, {
       now: T0,
     });
 
@@ -1034,7 +1034,7 @@ describe("unexpected database errors", () => {
     // hash — one of them a working credential until the transaction commits.
     const owner = await signUpOwner("Alpha", "owner@alpha.example");
     const second = await inviteMember(owner, "second@alpha.example");
-    const link = await issuePasswordReset(scopeOf(owner), owner.userId, second.userId, {
+    const link = await issueResetLink(scopeOf(owner), owner.userId, second.userId, {
       now: T0,
     });
 

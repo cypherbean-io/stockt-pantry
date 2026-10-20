@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 
 import {
   issueInvite,
-  issuePasswordReset,
+  issueResetLink,
   joinWithInvite,
   logIn,
   removeMember,
@@ -177,7 +177,7 @@ export async function createPasswordResetAction(memberId: unknown): Promise<Rese
   const session = await requireSession();
   const scope = await requireScope();
 
-  const link = await issuePasswordReset(scope, session.userId, memberId);
+  const link = await issueResetLink(scope, session.userId, memberId);
   if (link === undefined) return { refused: true };
 
   return { path: `/reset/${link.token}`, expiresAt: link.expiresAt.toISOString() };

@@ -368,7 +368,7 @@ export type IssuedPasswordReset = {
  * every refusal alike — yourself, someone who joined before you, someone in
  * another household, a malformed id — see `createPasswordReset`.
  */
-export async function issuePasswordReset(
+export async function issueResetLink(
   scope: HouseholdScope,
   issuedBy: string,
   memberId: unknown,
