@@ -48,7 +48,9 @@ HTTP-only cookies, implemented directly on `node:crypto` — see
 
 Everything runs from the compose file: Postgres, a one-shot migration job, and the app.
 For a full walkthrough — reverse proxy, backups, upgrades, and running it as an LXC
-container on Proxmox — see [`docs/INSTALL.md`](docs/INSTALL.md).
+container on Proxmox — see [`docs/INSTALL.md`](docs/INSTALL.md). For using the app day
+to day (pantry, recipes, imports, shopping lists, inviting members) as well as a shorter
+setup path, see the [user guide](docs/USER_GUIDE.md).
 
 ```bash
 cp .env.example .env
